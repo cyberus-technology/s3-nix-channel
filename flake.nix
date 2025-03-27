@@ -9,8 +9,11 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, crane, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs = { self, nixpkgs, crane, flake-utils, ... }: {
+    herculesCI.ciSystems = [
+      "x86_64-linux"
+    ];
+  } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
