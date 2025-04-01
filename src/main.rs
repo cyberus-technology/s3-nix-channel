@@ -26,12 +26,21 @@ struct Args {
     /// Name of the person to greet
     #[arg(long)]
     bucket: String,
+
+    /// The base URL of the service.
+    ///
+    /// If you want to serve objects from
+    /// https://foo.com/permanent/123.tar.xz, you need to specify
+    /// https://foo.com here.
+    #[arg(long)]
+    base_url: String,
 }
 
 #[derive(Debug, Clone)]
 struct Config {
     s3_client: aws_sdk_s3::Client,
     bucket: String,
+    base_url: String,
 }
 
 async fn sign_request(config: &Config, object_key: &str) -> Result<String, RequestError> {
@@ -86,9 +95,8 @@ async fn handle_current_tarxz_file(
         HeaderValue::from_str(&format!(
             // The Lockable HTTP Tarball Protocol. See:
             // https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher
-            //
-            // TODO The root URL should be configurable.
-            "<http://localhost:3000/permanent/{newest_object}>; rel=\"immutable\""
+            "<{}/permanent/{newest_object}>; rel=\"immutable\"",
+            config.base_url
         ))
         .map_err(|_e| RequestError::Unknown)?,
     );
@@ -115,7 +123,6 @@ async fn main() -> Result<()> {
         .with_max_level(tracing::Level::DEBUG)
         .init();
 
-    // TODO Port to simpler S3 library to avoid tons of dependencies. rust-s3?
     let amzn_config = aws_config::load_from_env().await;
 
     let config = Config {
@@ -125,6 +132,7 @@ async fn main() -> Result<()> {
                 .build(),
         ),
         bucket: args.bucket,
+        base_url: args.base_url,
     };
 
     // build our application with a single route
