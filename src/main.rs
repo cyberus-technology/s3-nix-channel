@@ -1,3 +1,5 @@
+mod error;
+
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
@@ -10,6 +12,8 @@ use axum::{
     Router,
 };
 use clap::Parser;
+
+use error::RequestError;
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -30,17 +34,21 @@ struct Config {
     bucket: String,
 }
 
-async fn sign_request(config: &Config, object_key: &str) -> Result<String> {
+async fn sign_request(config: &Config, object_key: &str) -> Result<String, RequestError> {
     Ok(config
         .s3_client
         .get_object()
         .bucket(&config.bucket)
         .key(object_key)
         // TODO Should expiration be configurable?
-        .presigned(PresigningConfig::expires_in(Duration::from_secs(600))?)
+        .presigned(
+            PresigningConfig::expires_in(Duration::from_secs(600))
+                .map_err(|_e| RequestError::PresignConfigFailure)?,
+        )
         .await
-        // TODO
-        .unwrap()
+        .map_err(|_e| RequestError::PresignFailure {
+            object_key: object_key.to_owned(),
+        })?
         .uri()
         .to_string())
 }
@@ -64,7 +72,10 @@ async fn find_newest_file(config: &Config) -> Result<String> {
     newest_object.key().context("No key?").map(str::to_owned)
 }
 
-async fn handle_current_tarxz_file(State(config): State<Arc<Config>>) -> impl IntoResponse {
+#[axum::debug_handler]
+async fn handle_current_tarxz_file(
+    State(config): State<Arc<Config>>,
+) -> Result<impl IntoResponse, RequestError> {
     let mut headers = HeaderMap::new();
 
     // TODO This is slow.
@@ -79,24 +90,21 @@ async fn handle_current_tarxz_file(State(config): State<Arc<Config>>) -> impl In
             // TODO The root URL should be configurable.
             "<http://localhost:3000/permanent/{newest_object}>; rel=\"immutable\""
         ))
-        // TODO
-        .unwrap(),
+        .map_err(|_e| RequestError::Unknown)?,
     );
 
-    (
-        headers,
-        // TODO Error handling
-        Redirect::temporary(&sign_request(&config, &newest_object).await.unwrap()),
-    )
+    let signed_url = sign_request(&config, &newest_object).await.unwrap();
+
+    Ok((headers, Redirect::temporary(&signed_url)).into_response())
 }
 
+#[axum::debug_handler]
 async fn handle_tarxz_file(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
-) -> impl IntoResponse {
+) -> Result<impl IntoResponse, RequestError> {
     // TODO Do some sanity checking of path.
-    // TODO Error handling
-    Redirect::temporary(&sign_request(&config, &path).await.unwrap())
+    Ok(Redirect::temporary(&sign_request(&config, &path).await?))
 }
 
 #[tokio::main]
