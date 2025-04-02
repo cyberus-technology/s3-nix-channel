@@ -27,7 +27,7 @@ struct Args {
     #[arg(long)]
     endpoint: String,
 
-    /// Name of the person to greet
+    /// The S3 bucket to serve the content from.
     #[arg(long)]
     bucket: String,
 
@@ -90,6 +90,7 @@ async fn sign_request(config: &Config, object_key: &str) -> Result<String, Reque
         .to_string())
 }
 
+/// Redirect to the latest tarball of the requested channel.
 async fn handle_channel(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
@@ -109,11 +110,11 @@ async fn handle_channel(
 
     let mut headers = HeaderMap::new();
 
+    // The Lockable HTTP Tarball Protocol. See:
+    // https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher
     headers.insert(
         LINK,
         HeaderValue::from_str(&format!(
-            // The Lockable HTTP Tarball Protocol. See:
-            // https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher
             "<{}/permanent/{latest_object}.tar.xz>; rel=\"immutable\"",
             config.base_url
         ))
@@ -123,10 +124,10 @@ async fn handle_channel(
     Ok((
         headers,
         Redirect::temporary(&sign_request(&config, &format!("{latest_object}.tar.xz")).await?),
-    )
-        .into_response())
+    ))
 }
 
+/// Forward a request to the backing store.
 async fn handle_persistent(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
