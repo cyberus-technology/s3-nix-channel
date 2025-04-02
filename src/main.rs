@@ -1,23 +1,26 @@
 mod error;
 mod persistent_config;
 
-use std::{sync::Arc, time::Duration};
+use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
 use arc_swap::ArcSwap;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
-    extract::{Path, State},
-    http::{header::LINK, HeaderMap, HeaderValue},
-    response::{IntoResponse, Redirect},
+    extract::{Path, Request, State},
+    http::{header::LINK, HeaderMap, HeaderValue, StatusCode},
+    middleware::{self, Next},
+    response::{self, IntoResponse, Redirect},
     routing::get,
     Router,
 };
+
 use clap::Parser;
 use error::RequestError;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use persistent_config::ChannelsConfig;
 use tokio::time::interval;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -43,9 +46,13 @@ struct Args {
     /// What IP and port to listen on. Specify as <IP>:<port>.
     #[arg(long, default_value = "localhost:3000")]
     listen: String,
+
+    /// Enable authentication using JWT by specifying the public key
+    /// for token verification.
+    #[arg(long)]
+    jwt_pem: Option<PathBuf>,
 }
 
-#[derive(Debug)]
 struct Config {
     s3_client: aws_sdk_s3::Client,
     bucket: String,
@@ -123,6 +130,62 @@ async fn handle_channel(
     ))
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct Claims {
+    // We need nothing.
+}
+
+/// Extract the HTTP Basic Authorization password.
+fn extract_auth_password(headers: &HeaderMap) -> Option<String> {
+    use base64::prelude::*;
+
+    // Get the Authorization header value
+    let header = headers.get("Authorization")?;
+    let header_value = header.to_str().ok()?;
+
+    let credentials = header_value.strip_prefix("Basic ")?.to_owned();
+
+    let credentials = String::from_utf8(BASE64_STANDARD.decode(&credentials).ok()?).ok()?;
+
+    let pw = credentials
+        .split_once(':')
+        .map(|(_user, password)| password.to_owned());
+
+    pw
+}
+
+/// If a JWT public key is available, make sure that each request is authorized.
+async fn auth_middleware(
+    State(decoding_key): State<DecodingKey>,
+    request: Request,
+    next: Next,
+) -> response::Response {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_nbf = true;
+
+    // TODO Make configurable
+    validation.set_audience(&["client"]);
+    validation.set_issuer(&["cyberus"]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
+
+    match extract_auth_password(request.headers())
+        .ok_or_else(|| anyhow!("Missing Authorization header"))
+        .and_then(|jwt_str| {
+            jsonwebtoken::decode::<Claims>(&jwt_str, &decoding_key, &validation)
+                .context("Failed to decode token")
+        }) {
+        Ok(claim) => {
+            debug!("Claim {:?}", claim)
+        }
+        Err(e) => {
+            info!("JWT validation error: {e}");
+            return StatusCode::UNAUTHORIZED.into_response();
+        }
+    }
+
+    next.run(request).await
+}
+
 /// Forward a request to the backing store.
 async fn handle_persistent(
     Path(path): Path<String>,
@@ -169,6 +232,21 @@ async fn main() -> Result<()> {
     let s3_client = aws_sdk_s3::Client::from_conf(aws_sdk_s3::config::Config::from(&amzn_config));
 
     let channels = ChannelsConfig::from_s3_bucket(&s3_client, &args.bucket).await?;
+    let jwt_public_key = args
+        .jwt_pem
+        .map(|pem_file| {
+            std::fs::read(&pem_file).with_context(|| {
+                format!("Failed to read public key PEM from {}", pem_file.display())
+            })
+        })
+        // Be sure to handle the I/O error, so we don't accidentally
+        // misinterpret "couldn't read file" as "there is no public
+        // key", which would make the service accessible without
+        // authentication.
+        .transpose()?
+        .map(|pem_data| DecodingKey::from_rsa_pem(&pem_data).context("Failed to decode public key"))
+        .transpose()?;
+
     let config = Arc::new(Config {
         s3_client,
         bucket: args.bucket,
@@ -184,10 +262,16 @@ async fn main() -> Result<()> {
     });
 
     // TODO Add proper logging of requests.
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/channel/{*path}", get(handle_channel))
         .route("/permanent/{*path}", get(handle_persistent))
         .with_state(config);
+
+    if let Some(jwt_public_key) = jwt_public_key {
+        let auth_layer = middleware::from_fn_with_state(jwt_public_key, auth_middleware);
+
+        app = app.layer(auth_layer);
+    }
 
     info!("Listening on {}", &args.listen);
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
