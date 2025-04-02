@@ -1,14 +1,87 @@
-# Tarball Serve
+# S3 Nix Channel Server
 
-This repository contains a small application that serves a S3 bucket
-of tarballs via the [Lockable HTTP Tarball
-Protocol](https://docs.lix.systems/manual/lix/stable/protocols/tarball-fetcher.html).
+A Rust service that serves an S3 bucket via the [Nix Lockable Tarball
+Protocol](https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher).
 
-There is really nothing to see here yet! We're missing everything from
-deployment to authorization.
+## Overview
 
-```console
-$ source credentials
+This service enables you to host Nix channels using an S3 bucket as
+the storage backend. It implements the Nix Lockable HTTP Tarball
+Protocol to allow these tarballs to be used as Flake inputs.
 
-$ cargo run -- --bucket ctrl-os-tarballs --endpoint https://nbg1.your-objectstorage.com
+## Features
+
+- Supports multiple channels with different versions.
+- Let's S3 serve the actual tarballs.
+- Periodically refreshes channel configuration without restarts.
+- (Soon!) Authentication via [JWT](https://en.wikipedia.org/wiki/JSON_Web_Token)
+
+## How It Works
+
+The service provides two main endpoints:
+
+- `/channel/{channel-name}.tar.xz` - Redirects to the latest version of a channel.
+- `/permanent/{object-key}.tar.xz` - Serves a specific immutable tarball by key.
+
+See below for the correct S3 bucket layout and usage instructions.
+
+## Installation
+
+### Building from Source
+
+This is a normal Rust program without any special dependencies. Refer
+to the [Cargo documentation](https://doc.rust-lang.org/cargo/).
+
+## Usage
+
+For S3 buckets that need authentication, you must set
+`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the environment.
+
+You can serve from AWS S3 using this command:
+
+```bash
+s3-nix-channel-server \
+  --endpoint https://s3.amazonaws.com \
+  --bucket your-nix-channel-bucket \
+  --base-url https://example.com \
+  --listen 0.0.0.0:3000
 ```
+
+To serve from Hetzner Object Storage modify the endpoint as needed,
+e.g. `--endpoint https://nbg1.your-objectstorage.com`.
+
+## S3 Bucket Configuration
+
+### channels.json
+
+This file defines the available channels. Example:
+
+```json
+{
+  "channels": ["nixos-25.05", "nixos-unstable"]
+}
+```
+
+### \<channel-name\>.json
+
+Each channel needs its own configuration file. Example for `nixos-25.05.json`:
+
+```json
+{
+  "latest": "nixos-25.05-2023-01-15"
+}
+```
+
+This means requests to `/channel/nixos-25.05.tar.xz` will redirect to the tarball at `/permanent/nixos-25.05-2023-01-15.tar.xz`, with appropriate immutable link headers.
+
+## Nix Flake Configuration
+
+To use a channel as a Nix Flake input, refer to the `/channel` endpoint:
+
+```nix
+  inputs.example.url = "https://example.com/channel/nixos-25.05.tar.xz";
+```
+
+## License
+
+See the `LICENSE` file.
