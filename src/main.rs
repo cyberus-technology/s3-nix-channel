@@ -1,8 +1,10 @@
 mod error;
+mod persistent_config;
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
+use arc_swap::ArcSwap;
 use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     extract::{Path, State},
@@ -12,8 +14,10 @@ use axum::{
     Router,
 };
 use clap::Parser;
-
 use error::RequestError;
+use persistent_config::ChannelsConfig;
+use tokio::time::interval;
+use tracing::{error, info};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -34,13 +38,37 @@ struct Args {
     /// https://foo.com here.
     #[arg(long)]
     base_url: String,
+
+    /// The interval in seconds for updating the configuration from
+    /// the config.json file in the bucket.
+    #[arg(long, default_value_t = 3600)]
+    config_update_seconds: u64,
+
+    /// What IP and port to listen on. Specify as <IP>:<port>.
+    #[arg(long, default_value = "localhost:3000")]
+    listen: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct Config {
     s3_client: aws_sdk_s3::Client,
     bucket: String,
     base_url: String,
+    update_interval: Duration,
+    channels: ArcSwap<ChannelsConfig>,
+}
+
+impl Config {
+    /// Return the latest object key for a given channel, if there is one.
+    fn latest_object_key(&self, channel_name: &str) -> Option<String> {
+        let channels = self.channels.load();
+
+        // The config may be updated concurrently. We can't hand out a
+        // reference.
+        channels
+            .latest_object_key(channel_name)
+            .map(|x| x.to_owned())
+    }
 }
 
 async fn sign_request(config: &Config, object_key: &str) -> Result<String, RequestError> {
@@ -62,57 +90,74 @@ async fn sign_request(config: &Config, object_key: &str) -> Result<String, Reque
         .to_string())
 }
 
-async fn find_newest_file(config: &Config) -> Result<String> {
-    let objects = config
-        .s3_client
-        .list_objects_v2()
-        .bucket(&config.bucket)
-        .send()
-        .await?;
-
-    // Find the object with the most recent LastModified timestamp
-    let newest_object = objects
-        .contents
-        .unwrap_or_default()
-        .into_iter()
-        .max_by_key(|obj| obj.last_modified.clone())
-        .ok_or_else(|| anyhow!("No files found"))?;
-
-    newest_object.key().context("No key?").map(str::to_owned)
-}
-
-#[axum::debug_handler]
-async fn handle_current_tarxz_file(
+async fn handle_channel(
+    Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
-    let mut headers = HeaderMap::new();
+    let channel_name = path
+        .strip_suffix(".tar.xz")
+        .ok_or_else(|| RequestError::InvalidFile {
+            file_name: path.clone(),
+        })?;
 
-    // TODO This is slow.
-    let newest_object = find_newest_file(&config).await.unwrap();
+    let latest_object =
+        config
+            .latest_object_key(channel_name)
+            .ok_or_else(|| RequestError::NoSuchChannel {
+                channel_name: channel_name.to_owned(),
+            })?;
+
+    let mut headers = HeaderMap::new();
 
     headers.insert(
         LINK,
         HeaderValue::from_str(&format!(
             // The Lockable HTTP Tarball Protocol. See:
             // https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher
-            "<{}/permanent/{newest_object}>; rel=\"immutable\"",
+            "<{}/permanent/{latest_object}.tar.xz>; rel=\"immutable\"",
             config.base_url
         ))
         .map_err(|_e| RequestError::Unknown)?,
     );
 
-    let signed_url = sign_request(&config, &newest_object).await.unwrap();
-
-    Ok((headers, Redirect::temporary(&signed_url)).into_response())
+    Ok((
+        headers,
+        Redirect::temporary(&sign_request(&config, &format!("{latest_object}.tar.xz")).await?),
+    )
+        .into_response())
 }
 
-#[axum::debug_handler]
-async fn handle_tarxz_file(
+async fn handle_persistent(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
-    // TODO Do some sanity checking of path.
+    if !path.ends_with(".tar.xz") {
+        return Err(RequestError::InvalidFile {
+            file_name: path.clone(),
+        });
+    }
+
     Ok(Redirect::temporary(&sign_request(&config, &path).await?))
+}
+
+/// Poll the bucket for changes of the configuration.
+async fn poll_config_file(state: &Config) {
+    let mut interval = interval(state.update_interval);
+    loop {
+        interval.tick().await;
+
+        let new_channels =
+            match ChannelsConfig::from_s3_bucket(&state.s3_client, &state.bucket).await {
+                Ok(channels) => channels,
+                Err(e) => {
+                    error!("Failed to load new config (will try again later): {e}");
+                    continue;
+                }
+            };
+
+        state.channels.store(Arc::new(new_channels));
+        info!("Successfully refreshed channel state.")
+    }
 }
 
 #[tokio::main]
@@ -125,24 +170,34 @@ async fn main() -> Result<()> {
 
     let amzn_config = aws_config::load_from_env().await;
 
-    let config = Config {
-        s3_client: aws_sdk_s3::Client::from_conf(
-            aws_sdk_s3::config::Builder::from(&amzn_config)
-                .endpoint_url(&args.endpoint)
-                .build(),
-        ),
+    let s3_client = aws_sdk_s3::Client::from_conf(
+        aws_sdk_s3::config::Builder::from(&amzn_config)
+            .endpoint_url(&args.endpoint)
+            .build(),
+    );
+    let channels = ChannelsConfig::from_s3_bucket(&s3_client, &args.bucket).await?;
+    let config = Arc::new(Config {
+        s3_client,
         bucket: args.bucket,
         base_url: args.base_url,
-    };
+        update_interval: Duration::from_secs(args.config_update_seconds),
+        channels: ArcSwap::new(Arc::new(channels)),
+    });
 
-    // build our application with a single route
+    // Reload the config periodically.
+    let update_state = config.clone();
+    tokio::spawn(async move {
+        poll_config_file(&update_state).await;
+    });
+
+    // TODO Add proper logging of requests.
     let app = Router::new()
-        .route("/current.tar.xz", get(handle_current_tarxz_file))
-        .route("/permanent/{*path}", get(handle_tarxz_file))
-        .with_state(Arc::new(config));
+        .route("/channel/{*path}", get(handle_channel))
+        .route("/permanent/{*path}", get(handle_persistent))
+        .with_state(config);
 
-    // run our app with hyper, listening globally on port 3000
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await?;
+    info!("Listening on {}", &args.listen);
+    let listener = tokio::net::TcpListener::bind(&args.listen).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
