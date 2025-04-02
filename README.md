@@ -74,11 +74,13 @@ Each channel needs its own configuration file. Example for `nixos-25.05.json`:
 
 ```json
 {
-  "latest": "nixos-25.05-2023-01-15"
+  "latest": "nixos-25.05-2025-05-15"
 }
 ```
 
-This means requests to `/channel/nixos-25.05.tar.xz` will redirect to the tarball at `/permanent/nixos-25.05-2023-01-15.tar.xz`, with appropriate immutable link headers.
+This means requests to `/channel/nixos-25.05.tar.xz` will redirect to
+the tarball at `/permanent/nixos-25.05-2025-05-15.tar.xz`, with
+appropriate immutable link headers.
 
 ## Nix Flake Configuration
 
