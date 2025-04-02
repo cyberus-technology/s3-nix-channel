@@ -23,10 +23,6 @@ use tracing::{error, info};
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    /// URL of the S3 endpoint
-    #[arg(long)]
-    endpoint: String,
-
     /// The S3 bucket to serve the content from.
     #[arg(long)]
     bucket: String,
@@ -170,12 +166,8 @@ async fn main() -> Result<()> {
         .init();
 
     let amzn_config = aws_config::load_from_env().await;
+    let s3_client = aws_sdk_s3::Client::from_conf(aws_sdk_s3::config::Config::from(&amzn_config));
 
-    let s3_client = aws_sdk_s3::Client::from_conf(
-        aws_sdk_s3::config::Builder::from(&amzn_config)
-            .endpoint_url(&args.endpoint)
-            .build(),
-    );
     let channels = ChannelsConfig::from_s3_bucket(&s3_client, &args.bucket).await?;
     let config = Arc::new(Config {
         s3_client,

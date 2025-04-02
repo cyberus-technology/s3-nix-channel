@@ -47,8 +47,14 @@ s3-nix-channel-server \
   --listen 0.0.0.0:3000
 ```
 
-To serve from Hetzner Object Storage modify the endpoint as needed,
-e.g. `--endpoint https://nbg1.your-objectstorage.com`.
+To serve from Hetzner Object Storage you need to set `AWS_REGION` and `AWS_ENDPOINT_URL` in the environment as well. This could look like:
+
+```bash
+export AWS_ACCESS_KEY_ID=<your-access-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret-key>
+export AWS_REGION="eu-central-1"
+export AWS_ENDPOINT_URL="https://nbg1.your-objectstorage.com"
+```
 
 ## S3 Bucket Configuration
 
