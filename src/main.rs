@@ -21,7 +21,7 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use persistent_config::ChannelsConfig;
 use tokio::time::interval;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -312,6 +312,17 @@ async fn main() -> Result<()> {
 
     info!("Listening on {}", &args.listen);
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
+
+    tokio::task::spawn_blocking(|| {
+        use sd_notify::{notify, NotifyState};
+        if let Err(e) = notify(true, &[NotifyState::Ready]) {
+            warn!("Failed to notify systemd: {e}");
+        } else {
+            debug!("Notified systemd that we are ready to serve!");
+        }
+    })
+    .await?;
+
     axum::serve(listener, app).await?;
 
     Ok(())
