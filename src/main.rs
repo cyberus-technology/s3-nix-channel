@@ -293,19 +293,22 @@ async fn main() -> Result<()> {
     let mut app = Router::new()
         .route("/channel/{*path}", get(handle_channel))
         .route("/permanent/{*path}", get(handle_persistent))
-        .with_state(config)
-        .layer(middleware::from_fn(log_request_middleware))
-        .layer(
-            TraceLayer::new_for_http().make_span_with(|request: &Request| {
-                tracing::debug_span!("request", method = %request.method(), uri = %request.uri())
-            }),
-        );
+        .with_state(config);
 
     if let Some(jwt_public_key) = jwt_public_key {
         let auth_layer = middleware::from_fn_with_state(jwt_public_key, auth_middleware);
 
         app = app.layer(auth_layer);
     }
+
+    // Layer logging last, so we can see authentication failures as well.
+    app = app
+	.layer(middleware::from_fn(log_request_middleware))
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request| {
+                tracing::debug_span!("request", method = %request.method(), uri = %request.uri())
+            }),
+        );
 
     info!("Listening on {}", &args.listen);
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
