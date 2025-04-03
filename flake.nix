@@ -27,14 +27,15 @@
 
           buildInputs = [
             # Add additional build inputs here
-          ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
-            # Additional darwin specific inputs can be set here
-            pkgs.libiconv
           ];
         };
 
+        # Build *just* the cargo dependencies, so we can reuse
+        # all of that work (e.g. via cachix) when running in CI
+        cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+
         tarball-serve = craneLib.buildPackage (commonArgs // {
-          cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+          inherit cargoArtifacts;
 
           # Additional environment variables or build phases/hooks can be set
           # here *without* rebuilding all dependency crates
@@ -44,6 +45,17 @@
       {
         checks = {
           inherit tarball-serve;
+
+          # Run clippy (and deny all warnings) on the crate source,
+          # again, reusing the dependency artifacts from above.
+          #
+          # Note that this is done as a separate derivation so that
+          # we can block the CI if there are issues here, but not
+          # prevent downstream consumers from building our crate by itself.
+          tarball-serve-clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--all-targets -- --deny warnings";
+          });
         };
 
         packages.default = tarball-serve;
