@@ -257,7 +257,11 @@ async fn main() -> Result<()> {
         .init();
 
     let amzn_config = aws_config::load_from_env().await;
-    let s3_client = aws_sdk_s3::Client::from_conf(aws_sdk_s3::config::Config::from(&amzn_config));
+    let s3_config = aws_sdk_s3::config::Builder::from(&amzn_config)
+        // TODO For minio compat. Should this be configurable?
+        .force_path_style(true)
+        .build();
+    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
 
     let channels = ChannelsConfig::from_s3_bucket(&s3_client, &args.bucket).await?;
     let jwt_public_key = args
