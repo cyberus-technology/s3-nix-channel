@@ -163,10 +163,10 @@ async fn auth_middleware(
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_nbf = true;
 
-    // TODO Make configurable
-    validation.set_audience(&["client"]);
-    validation.set_issuer(&["cyberus"]);
-    validation.set_required_spec_claims(&["exp", "iss", "aud"]);
+    // TODO What we validate in the claims should be configurable. For
+    // now we just check whether the token is signed and valid.
+    validation.validate_aud = false;
+    validation.set_required_spec_claims(&["exp"]);
 
     match extract_auth_password(request.headers())
         .ok_or_else(|| anyhow!("Missing Authorization header"))
