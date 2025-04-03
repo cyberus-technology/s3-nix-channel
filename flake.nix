@@ -53,6 +53,10 @@
           # Additional environment variables or build phases/hooks can be set
           # here *without* rebuilding all dependency crates
           # MY_CUSTOM_VAR = "some value";
+
+          meta = {
+            mainProgram = "tarball-serve";
+          };
         });
       in
       {
@@ -69,7 +73,7 @@
             inherit cargoArtifacts;
             cargoClippyExtraArgs = "--all-targets -- --deny warnings";
           });
-        };
+        } // import ./nix/tests.nix { inherit self system; };
 
         packages.default = tarball-serve;
 
@@ -79,7 +83,7 @@
 
         devShells.default = craneLib.devShell {
           # Inherit inputs from checks.
-          checks = self.checks.${system};
+          # checks = self.checks.${system};
 
           # Additional dev-shell environment variables can be set directly
           # MY_CUSTOM_DEVELOPMENT_VAR = "something else";
