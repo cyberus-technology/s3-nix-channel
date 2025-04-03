@@ -13,6 +13,19 @@
     herculesCI.ciSystems = [
       "x86_64-linux"
     ];
+
+    nixosModules.default = { config, lib, pkgs, ... }: {
+      imports = [
+        ./nix/module.nix
+      ];
+
+      nixpkgs.overlays = [
+        (final: pref: {
+          tarball-serve = self.packages.${pkgs.hostPlatform.system}.default;
+        })
+      ];
+    };
+
   } // flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};

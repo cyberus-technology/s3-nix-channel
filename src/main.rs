@@ -310,6 +310,7 @@ async fn main() -> Result<()> {
             }),
         );
 
+    // TODO Accept socket from systemd. We could run without credentials.
     info!("Listening on {}", &args.listen);
     let listener = tokio::net::TcpListener::bind(&args.listen).await?;
 
