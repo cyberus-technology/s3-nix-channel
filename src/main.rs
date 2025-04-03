@@ -20,6 +20,7 @@ use error::RequestError;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use persistent_config::ChannelsConfig;
 use tokio::time::interval;
+use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
@@ -186,6 +187,27 @@ async fn auth_middleware(
     next.run(request).await
 }
 
+async fn log_request_middleware(req: Request, next: Next) -> response::Response {
+    let path = req.uri().path().to_owned();
+    let method = req.method().clone();
+
+    let start = std::time::Instant::now();
+    let response = next.run(req).await;
+    let duration = start.elapsed();
+
+    let status = response.status();
+
+    info!(
+        "Request: {} {} -> {} ({:?})",
+        method,
+        path,
+        status.as_u16(),
+        duration
+    );
+
+    response
+}
+
 /// Forward a request to the backing store.
 async fn handle_persistent(
     Path(path): Path<String>,
@@ -203,6 +225,10 @@ async fn handle_persistent(
 /// Poll the bucket for changes of the configuration.
 async fn poll_config_file(state: &Config) {
     let mut interval = interval(state.update_interval);
+
+    // The first tick completes immediately, so we skip it.
+    interval.tick().await;
+
     loop {
         interval.tick().await;
 
@@ -225,7 +251,9 @@ async fn main() -> Result<()> {
     let args = Args::parse();
 
     tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::builder().parse("info,tarball_serve=debug")?,
+        )
         .init();
 
     let amzn_config = aws_config::load_from_env().await;
@@ -265,7 +293,13 @@ async fn main() -> Result<()> {
     let mut app = Router::new()
         .route("/channel/{*path}", get(handle_channel))
         .route("/permanent/{*path}", get(handle_persistent))
-        .with_state(config);
+        .with_state(config)
+        .layer(middleware::from_fn(log_request_middleware))
+        .layer(
+            TraceLayer::new_for_http().make_span_with(|request: &Request| {
+                tracing::debug_span!("request", method = %request.method(), uri = %request.uri())
+            }),
+        );
 
     if let Some(jwt_public_key) = jwt_public_key {
         let auth_layer = middleware::from_fn_with_state(jwt_public_key, auth_middleware);
