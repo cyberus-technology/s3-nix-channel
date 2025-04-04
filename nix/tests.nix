@@ -86,6 +86,13 @@ in {
       ## Start our server.
       tserve.start()
       tserve.wait_for_unit("tarball-serve.service")
+
+      tserve.succeed("curl -L http://localhost:3000/channel/thechannel-24.05.tar.xz > latest.tar.xz")
+      tserve.succeed("curl -L http://localhost:3000/permanent/tarball-1234.tar.xz > permanent.tar.xz")
+
+      tserve.copy_from_host("${tarball}", "reference.tar.xz")
+      tserve.succeed("cmp reference.tar.xz latest.tar.xz")
+      tserve.succeed("cmp reference.tar.xz permanent.tar.xz")
     '';
   };
 }
