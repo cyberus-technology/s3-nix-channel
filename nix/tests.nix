@@ -22,15 +22,42 @@ let
     latest = "tarball-1234";
   });
 
-  tarball = pkgs.runCommand "tarball-1234.tar.xz" {
-    buildInputs = [ pkgs.libarchive ];
-  } ''
+  tarball = pkgs.runCommand "tarball-1234.tar.xz"
+    {
+      nativeBuildInputs = [ pkgs.libarchive ];
+    } ''
     mkdir foo
     touch foo/hello
 
     tar -cJf $out foo
   '';
-in {
+
+  tarballServeCommon = {
+    services.tarball-serve = {
+      enable = true;
+      secretsFile = "${secretsFile}";
+      listen = "0.0.0.0:3000";
+
+      inherit bucket;
+    };
+  };
+
+  rsaKeypair = pkgs.runCommand "rsa-keypair"
+    {
+      nativeBuildInputs = [
+        pkgs.openssl
+        pkgs.openssh
+        pkgs.jwt-cli
+      ];
+    } ''
+    mkdir -p $out
+    ssh-keygen -t rsa -b 4096 -E SHA256 -m PEM -P "" -f $out/private.pem
+    openssl rsa -pubout -in $out/private.pem -out $out/public.pem
+
+    jwt encode --alg RS256 --exp=100y -S @$out/private.pem > $out/jwt
+  '';
+in
+{
   canServeFiles = pkgs.nixosTest {
     name = "tarball-serve";
 
@@ -50,20 +77,29 @@ in {
         networking.firewall.enable = false;
       };
 
-      tserve = { config, pkgs, ... }: {
+      servePublic = { config, pkgs, ... }: {
         imports = [
           self.nixosModules.default
+          tarballServeCommon
         ];
 
         services.tarball-serve = {
-          enable = true;
-          secretsFile = "${secretsFile}";
-          listen = "0.0.0.0:3000";
-          baseUrl = "http://tserve:3000";
-
-          inherit bucket;
+          baseUrl = "http://servePublic:3000";
         };
       };
+
+      servePrivate = { config, pkgs, ... }: {
+        imports = [
+          self.nixosModules.default
+          tarballServeCommon
+        ];
+
+        services.tarball-serve = {
+          baseUrl = "http://servePrivate:3000";
+          jwtPublicKey = "${rsaKeypair}/public.pem";
+        };
+      };
+
     };
 
     testScript = ''
@@ -83,16 +119,30 @@ in {
 
       s3.succeed("mc cp content/* local/${bucket}/")
 
-      ## Start our server.
-      tserve.start()
-      tserve.wait_for_unit("tarball-serve.service")
+      ## Start our server that doesn't require authentication.
+      servePublic.start()
+      servePublic.wait_for_unit("tarball-serve.service")
 
-      tserve.succeed("curl -L http://localhost:3000/channel/thechannel-24.05.tar.xz > latest.tar.xz")
-      tserve.succeed("curl -L http://localhost:3000/permanent/tarball-1234.tar.xz > permanent.tar.xz")
+      servePublic.succeed("curl -vL http://localhost:3000/channel/thechannel-24.05.tar.xz > latest.tar.xz")
+      servePublic.succeed("curl -vL http://localhost:3000/permanent/tarball-1234.tar.xz > permanent.tar.xz")
 
-      tserve.copy_from_host("${tarball}", "reference.tar.xz")
-      tserve.succeed("cmp reference.tar.xz latest.tar.xz")
-      tserve.succeed("cmp reference.tar.xz permanent.tar.xz")
+      servePublic.copy_from_host("${tarball}", "reference.tar.xz")
+      servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
+      servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
+      servePublic.shutdown()
+
+      ## Start our server that requires authentication
+      servePrivate.start()
+      servePrivate.wait_for_unit("tarball-serve.service")
+
+      # Unauthorized requests are rejected.
+      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/channel/thechannel-24.05.tar.xz")
+      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/permanent/tarball-1234.tar.xz")
+
+      # Authorized accesses succeed.
+      servePrivate.copy_from_host("${rsaKeypair}/jwt", "jwt")
+      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/channel/thechannel-24.05.tar.xz")
+      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/permanent/tarball-1234.tar.xz")
     '';
   };
 }
