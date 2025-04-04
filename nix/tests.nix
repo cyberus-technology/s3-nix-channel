@@ -13,10 +13,27 @@ let
     AWS_REGION=${region}
     AWS_ENDPOINT_URL="http://s3:9000"
   '';
+
+  channelsConfig = pkgs.writeText "channels.json" (builtins.toJSON {
+    channels = [ "thechannel-24.05" ];
+  });
+
+  thechannelConfig = pkgs.writeText "thechannel-24.05.json" (builtins.toJSON {
+    latest = "tarball-1234";
+  });
+
+  tarball = pkgs.runCommand "tarball-1234.tar.xz" {
+    buildInputs = [ pkgs.libarchive ];
+  } ''
+    mkdir foo
+    touch foo/hello
+
+    tar -cJf $out foo
+  '';
 in {
   canServeFiles = pkgs.nixosTest {
     name = "tarball-serve";
-    
+
     nodes = {
       s3 = { config, ... }: {
         services.minio = {
@@ -26,9 +43,13 @@ in {
           # minio listens by default on port 9000.
         };
 
+        environment.systemPackages = with pkgs; [
+          minio-client
+        ];
+
         networking.firewall.enable = false;
       };
-      
+
       tserve = { config, pkgs, ... }: {
         imports = [
           self.nixosModules.default
@@ -44,15 +65,27 @@ in {
         };
       };
     };
-    
+
     testScript = ''
       s3.start()
       s3.wait_for_unit("minio.service")
 
-      tserve.start()
+      ## Prepare the bucket of tarballs with configuration.
 
-      # TODO Need to create the bucket first.
-      # tserve.wait_for_unit("tarball-serve.service")
+      # Minio sometimes takes a second to come up.
+      s3.wait_until_succeeds("mc alias set local http://localhost:9000 ${accessKey} ${secretKey}")
+      s3.succeed("mc mb local/${bucket}")
+
+      s3.succeed("mkdir content")
+      s3.copy_from_host("${channelsConfig}", "content/channels.json");
+      s3.copy_from_host("${thechannelConfig}", "content/thechannel-24.05.json");
+      s3.copy_from_host("${tarball}", "content/tarball-1234.tar.xz");
+
+      s3.succeed("mc cp content/* local/${bucket}/")
+
+      ## Start our server.
+      tserve.start()
+      tserve.wait_for_unit("tarball-serve.service")
     '';
   };
 }
