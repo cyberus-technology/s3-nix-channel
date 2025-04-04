@@ -75,7 +75,7 @@ in {
             --bucket ${cfg.bucket}  \
             --base-url ${cfg.baseUrl} \
             ${lib.optionalString (cfg.jwtPublicKey != null)
-              "--jwt-pem $CREDENTIALS_DIRECTORY/pem"}
+              "--jwt-pem \${CREDENTIALS_DIRECTORY}/pem"}
         '';
 
         # TODO Hardening
