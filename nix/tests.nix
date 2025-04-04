@@ -144,5 +144,7 @@ in
       assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/channel/thechannel-24.05.tar.xz")
       assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/permanent/tarball-1234.tar.xz")
     '';
+
+    # TODO Add test for using the tarball as a flake input.
   };
 }
