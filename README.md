@@ -14,7 +14,7 @@ Protocol to allow these tarballs to be used as Flake inputs.
 - Supports multiple channels with different versions.
 - Let's S3 serve the actual tarballs.
 - Periodically refreshes channel configuration without restarts.
-- (Soon!) Authentication via [JWT](https://en.wikipedia.org/wiki/JSON_Web_Token)
+- Authentication via [JWT](https://en.wikipedia.org/wiki/JSON_Web_Token)
 
 ## How It Works
 
@@ -40,7 +40,7 @@ For S3 buckets that need authentication, you must set
 You can serve from AWS S3 using this command:
 
 ```bash
-s3-nix-channel-server \
+tarball-serve \
   --endpoint https://s3.amazonaws.com \
   --bucket your-nix-channel-bucket \
   --base-url https://example.com \
@@ -55,6 +55,15 @@ export AWS_SECRET_ACCESS_KEY=<your-secret-key>
 export AWS_REGION="eu-central-1"
 export AWS_ENDPOINT_URL="https://nbg1.your-objectstorage.com"
 ```
+
+### Authentication
+
+If authentication is required, `tarball-serve` can be started with
+`--jwt-pem public.pem`, where `public.pem` is a RSA public key.  We
+currently support the `RS256` algorithm.
+
+Incoming requests must then use HTTP Basic authentication with a
+signed token in the _password_ part of the request.
 
 ## S3 Bucket Configuration
 
