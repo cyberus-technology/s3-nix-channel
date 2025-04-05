@@ -132,7 +132,7 @@ in
       servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
       servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
 
-      #servePublic.shutdown()
+      servePublic.shutdown()
 
       ## Start our server that requires authentication
       servePrivate.start()
@@ -157,7 +157,5 @@ in
       # Check whether the lock file records the right permanent URL.
       assert "http://localhost/permanent/tarball-1234.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
     '';
-
-    # TODO Add test for using the tarball as a flake input.
   };
 }
