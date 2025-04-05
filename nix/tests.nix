@@ -32,11 +32,18 @@ let
     tar -cJf $out foo
   '';
 
-  tarballServeCommon = {
+  tarballServeCommon = { pkgs, ... }: {
+    nix.extraOptions = ''
+      experimental-features = nix-command flakes
+    '';
+
+    environment.systemPackages = with pkgs; [ git jq ];
+
     services.tarball-serve = {
       enable = true;
       secretsFile = "${secretsFile}";
-      listen = "0.0.0.0:3000";
+      listen = "0.0.0.0:80";
+      baseUrl = "http://localhost";
 
       inherit bucket;
     };
@@ -82,10 +89,6 @@ in
           self.nixosModules.default
           tarballServeCommon
         ];
-
-        services.tarball-serve = {
-          baseUrl = "http://servePublic:3000";
-        };
       };
 
       servePrivate = { config, pkgs, ... }: {
@@ -95,7 +98,6 @@ in
         ];
 
         services.tarball-serve = {
-          baseUrl = "http://servePrivate:3000";
           jwtPublicKey = "${rsaKeypair}/public.pem";
         };
       };
@@ -123,26 +125,37 @@ in
       servePublic.start()
       servePublic.wait_for_unit("tarball-serve.service")
 
-      servePublic.succeed("curl -vL http://localhost:3000/channel/thechannel-24.05.tar.xz > latest.tar.xz")
-      servePublic.succeed("curl -vL http://localhost:3000/permanent/tarball-1234.tar.xz > permanent.tar.xz")
+      servePublic.succeed("curl -vL http://localhost/channel/thechannel-24.05.tar.xz > latest.tar.xz")
+      servePublic.succeed("curl -vL http://localhost/permanent/tarball-1234.tar.xz > permanent.tar.xz")
 
       servePublic.copy_from_host("${tarball}", "reference.tar.xz")
       servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
       servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
-      servePublic.shutdown()
+
+      #servePublic.shutdown()
 
       ## Start our server that requires authentication
       servePrivate.start()
       servePrivate.wait_for_unit("tarball-serve.service")
 
       # Unauthorized requests are rejected.
-      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/channel/thechannel-24.05.tar.xz")
-      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000/permanent/tarball-1234.tar.xz")
+      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost/channel/thechannel-24.05.tar.xz")
+      assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost/permanent/tarball-1234.tar.xz")
 
       # Authorized accesses succeed.
       servePrivate.copy_from_host("${rsaKeypair}/jwt", "jwt")
-      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/channel/thechannel-24.05.tar.xz")
-      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost:3000/permanent/tarball-1234.tar.xz")
+      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/channel/thechannel-24.05.tar.xz")
+      assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/permanent/tarball-1234.tar.xz")
+
+      ## Check whether the channel works as flake input.
+      servePrivate.succeed("mkdir -p flake ~/.config/nix")
+      servePrivate.succeed("echo netrc-file = $HOME/.netrc > ~/.config/nix/nix.conf")
+      servePrivate.succeed("echo machine localhost password $(cat jwt) > ~/.netrc")
+      servePrivate.copy_from_host("${./test-flake.nix}", "flake/flake.nix")
+      servePrivate.succeed("cd flake ; git init ; git add flake.nix ; nix flake lock")
+
+      # Check whether the lock file records the right permanent URL.
+      assert "http://localhost/permanent/tarball-1234.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
     '';
 
     # TODO Add test for using the tarball as a flake input.
