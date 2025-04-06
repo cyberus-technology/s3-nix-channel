@@ -1,0 +1,10 @@
+[licenses]
+allow = [
+    "AGPL-3.0",
+    "ISC",
+    "MIT",
+    "BSD-3-Clause",
+    "Zlib",
+    "Apache-2.0",
+    "Unicode-3.0",
+]
