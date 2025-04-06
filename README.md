@@ -1,53 +1,84 @@
-# S3 Nix Channel Server
+# 🚀 S3 Nix Channel Server
 
-A Rust service that serves an S3 bucket via the [Nix Lockable Tarball
-Protocol](https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher).
+A Rust service that serves an S3 bucket via the [Nix Lockable HTTP
+Tarball
+Protocol](https://nix.dev/manual/nix/2.25/protocols/tarball-fetcher),
+allowing you to host your own Nix channels effortlessly.
 
-## Overview
+## 📖 Overview
 
-This service enables you to host Nix channels using an S3 bucket as
-the storage backend. It implements the Nix Lockable HTTP Tarball
-Protocol to allow these tarballs to be used as Flake inputs.
+This service enables you to host Nix channels using an S3-compatible
+storage backend. It implements the Nix Lockable HTTP Tarball Protocol
+to allow these tarballs to be used as Flake inputs.
 
-## Features
+## ✨ Features
 
-- Supports multiple channels with different versions.
-- Let's S3 serve the actual tarballs.
-- Periodically refreshes channel configuration without restarts.
-- Authentication via [JWT](https://en.wikipedia.org/wiki/JSON_Web_Token)
+- 📦 Supports multiple channels with different versions
+- 🔄 Lets S3 serve the actual tarballs for efficiency
+- 🔁 Periodically refreshes channel configuration without restarts
+- 🔒 Authentication via [JWT](https://en.wikipedia.org/wiki/JSON_Web_Token) (optional)
+- 🛡️ Strong sandboxing via systemd (when using the Nix module)
 
-## How It Works
+## 🛠️ How It Works
 
 The service provides two main endpoints:
 
-- `/channel/{channel-name}.tar.xz` - Redirects to the latest version of a channel.
-- `/permanent/{object-key}.tar.xz` - Serves a specific immutable tarball by key.
+- `/channel/{channel-name}.tar.xz` - Redirects to the latest version of a channel
+- `/permanent/{object-key}.tar.xz` - Serves a specific immutable tarball by key
 
-See below for the correct S3 bucket layout and usage instructions.
+### 📝 Nix Flake Configuration
 
-## Installation
+To use a channel as a Nix Flake input:
+
+```nix
+{
+  inputs = {
+    example.url = "https://example.com/channel/nixos-25.05.tar.xz";
+  };
+
+  # ...
+}
+```
+
+## 🔧 Installation
 
 ### Building from Source
 
-This is a normal Rust program without any special dependencies. Refer
-to the [Cargo documentation](https://doc.rust-lang.org/cargo/).
+```bash
+# Clone the repository
+$ git clone https://github.com/blitz/s3-nix-channel.git
+$ cd s3-nix-channel
 
-## Usage
+# Build with cargo
+$ cargo build --release
+```
 
-For S3 buckets that need authentication, you must set
-`AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the environment.
+The binary will be available at `target/release/s3-nix-channel`.
 
-You can serve from AWS S3 using this command:
+## 🚀 Usage
+
+### AWS S3
+
+For S3 buckets that need authentication, set these environment variables:
+
+```bash
+export AWS_ACCESS_KEY_ID=<your-access-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret-key>
+```
+
+Start the server:
 
 ```bash
 s3-nix-channel \
-  --endpoint https://s3.amazonaws.com \
   --bucket your-nix-channel-bucket \
   --base-url https://example.com \
   --listen 0.0.0.0:3000
 ```
 
-To serve from Hetzner Object Storage you need to set `AWS_REGION` and `AWS_ENDPOINT_URL` in the environment as well. This could look like:
+### Hetzner Object Storage
+
+For Hetzner Object Storage, set these additional environment
+variables:
 
 ```bash
 export AWS_ACCESS_KEY_ID=<your-access-key>
@@ -56,20 +87,45 @@ export AWS_REGION="eu-central-1"
 export AWS_ENDPOINT_URL="https://nbg1.your-objectstorage.com"
 ```
 
-### Authentication
+Adjust the endpoint URL as necessary. Then start the server as shown
+above.
 
-If authentication is required, `s3-nix-channel` can be started with
-`--jwt-pem public.pem`, where `public.pem` is a RSA public key.  We
-currently support the `RS256` algorithm.
+### Other S3-Compatible Providers
 
-Incoming requests must then use HTTP Basic authentication with a
-signed token in the _password_ part of the request.
+Most S3-compatible storage providers should work by setting the
+appropriate endpoint and credentials.
 
-## S3 Bucket Configuration
+## 🔒 Authentication
+
+If authentication is required,
+[JWT](https://en.wikipedia.org/wiki/JSON_Web_Token) can be used. The
+supported algorithm is `RS256`.
+
+1. Generate an RSA key pair:
+   ```bash
+   $ openssl genrsa -out private.pem 2048
+   $ openssl rsa -in private.pem -pubout -out public.pem
+   ```
+
+2. Start the server with the public key:
+   ```bash
+   $ s3-nix-channel \
+     --bucket your-nix-channel-bucket \
+     --base-url https://example.com \
+     --listen 0.0.0.0:3000 \
+     --jwt-pem public.pem
+   ```
+
+3. For clients, create JWT tokens signed with the private key and use
+   HTTP Basic authentication with the token as the password. This is
+   designed to be used via the
+   [netrc](https://nix.dev/manual/nix/2.25/command-ref/conf-file#conf-netrc-file).
+
+## 📁 S3 Bucket Configuration
 
 ### channels.json
 
-This file defines the available channels. Example:
+This file defines the available channels:
 
 ```json
 {
@@ -77,9 +133,10 @@ This file defines the available channels. Example:
 }
 ```
 
-### \<channel-name\>.json
+### <channel-name>.json
 
-Each channel needs its own configuration file. Example for `nixos-25.05.json`:
+Each channel needs its own configuration file. Example for
+`nixos-25.05.json`:
 
 ```json
 {
@@ -91,14 +148,10 @@ This means requests to `/channel/nixos-25.05.tar.xz` will redirect to
 the tarball at `/permanent/nixos-25.05-2025-05-15.tar.xz`, with
 appropriate immutable link headers.
 
-## Nix Flake Configuration
+## 👥 Contributing
 
-To use a channel as a Nix Flake input, refer to the `/channel` endpoint:
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-```nix
-  inputs.example.url = "https://example.com/channel/nixos-25.05.tar.xz";
-```
-
-## License
+## 📜 License
 
 See the `LICENSE` file.
