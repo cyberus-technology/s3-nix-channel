@@ -44,9 +44,13 @@ struct Args {
     #[arg(long, default_value_t = 3600)]
     config_update_seconds: u64,
 
-    /// What IP and port to listen on. Specify as <IP>:<port>.
-    #[arg(long, default_value = "localhost:3000")]
-    listen: String,
+    /// What IP and port to listen on. Specify as <IP>:<port>, for
+    /// example: 0.0.0.0:3000
+    ///
+    /// If this option is not specified, we'll try to get a listening
+    /// socket from systemd.
+    #[arg(long)]
+    listen: Option<String>,
 
     /// Enable authentication using JWT by specifying the public key
     /// for token verification.
@@ -314,9 +318,25 @@ async fn main() -> Result<()> {
             }),
         );
 
-    // TODO Accept socket from systemd. We could run without credentials.
-    info!("Listening on {}", &args.listen);
-    let listener = tokio::net::TcpListener::bind(&args.listen).await?;
+    let listener = match args.listen {
+        Some(listen_str) => {
+            info!("Listening on {}", &listen_str);
+            tokio::net::TcpListener::bind(&listen_str).await?
+        }
+        None => {
+            use std::os::fd::FromRawFd;
+            // Accept socket from systemd.
+            let socket_fd = sd_notify::listen_fds()
+                .context("Failed to get listening socket from systemd")?
+                .next()
+                .ok_or_else(|| anyhow!("Got 0 file descriptors from systemd?"))?;
+            // SAFETY: Systemd guarantees that this is an open
+            // listening socket.
+            let std_listener = unsafe { std::net::TcpListener::from_raw_fd(socket_fd) };
+
+            tokio::net::TcpListener::from_std(std_listener)?
+        }
+    };
 
     tokio::task::spawn_blocking(|| {
         use sd_notify::{notify, NotifyState};
