@@ -88,7 +88,28 @@ in {
               "--jwt-pem \${CREDENTIALS_DIRECTORY}/pem"}
         '';
 
-        # TODO Hardening
+        DynamicUser = true;
+        ProtectProc = "invisible";
+        ProtectSystem = "strict";
+        PrivateDevices = true;
+        PrivateIPC = true;
+        ProcSubset = "pid";
+        ProtectHostname = true;
+        ProtectClock = true;
+        ProtectKernelTunables = true;
+        ProtectKernelModules = true;
+        ProtectKernelLogs = true;
+        ProtectControlGroups = "strict";
+        ProtectHome = true;
+        LockPersonality = true;
+        MemoryDenyWriteExecute = true;
+        SystemCallArchitectures = "native";
+        RestrictRealtime = true;
+        RestrictSUIDSGID = true;
+        RestrictAddressFamilies = "AF_UNIX AF_INET AF_INET6";
+        RestrictNamespaces = true;
+        SystemCallFilter = "~@swap @reboot @raw-io @privileged @obsolete @mount @module @cpu-emulation @clock  @debug @resources";
+        UMask = "0077";
 
         EnvironmentFile = cfg.secretsFile;
       } // lib.optionalAttrs (cfg.jwtPublicKey != null) {
