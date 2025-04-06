@@ -21,7 +21,7 @@
 
       nixpkgs.overlays = [
         (final: pref: {
-          tarball-serve = self.packages.${pkgs.hostPlatform.system}.default;
+          s3-nix-channel = self.packages.${pkgs.hostPlatform.system}.default;
         })
       ];
     };
@@ -47,7 +47,7 @@
         # all of that work (e.g. via cachix) when running in CI
         cargoArtifacts = craneLib.buildDepsOnly commonArgs;
 
-        tarball-serve = craneLib.buildPackage (commonArgs // {
+        s3-nix-channel = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
 
           # Additional environment variables or build phases/hooks can be set
@@ -55,13 +55,13 @@
           # MY_CUSTOM_VAR = "some value";
 
           meta = {
-            mainProgram = "tarball-serve";
+            mainProgram = "s3-nix-channel";
           };
         });
       in
       {
         checks = {
-          inherit tarball-serve;
+          inherit s3-nix-channel;
 
           # Run clippy (and deny all warnings) on the crate source,
           # again, reusing the dependency artifacts from above.
@@ -69,16 +69,16 @@
           # Note that this is done as a separate derivation so that
           # we can block the CI if there are issues here, but not
           # prevent downstream consumers from building our crate by itself.
-          tarball-serve-clippy = craneLib.cargoClippy (commonArgs // {
+          s3-nix-channel-clippy = craneLib.cargoClippy (commonArgs // {
             inherit cargoArtifacts;
             cargoClippyExtraArgs = "--all-targets -- --deny warnings";
           });
         } // import ./nix/tests.nix { inherit self system; };
 
-        packages.default = tarball-serve;
+        packages.default = s3-nix-channel;
 
         apps.default = flake-utils.lib.mkApp {
-          drv = tarball-serve;
+          drv = s3-nix-channel;
         };
 
         devShells.default = craneLib.devShell {

@@ -1,13 +1,13 @@
 { config, lib, pkgs, ... }:
 let
-  cfg = config.services.tarball-serve;
+  cfg = config.services.s3-nix-channel;
 in {
-  options.services.tarball-serve = {
-    enable = lib.mkEnableOption "Enables the tarball-serve service";
+  options.services.s3-nix-channel = {
+    enable = lib.mkEnableOption "Enables the s3-nix-channel service";
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.tarball-serve;
+      default = pkgs.s3-nix-channel;
     };
 
     bucket = lib.mkOption {
@@ -61,7 +61,7 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
-    systemd.sockets.tarball-serve = {
+    systemd.sockets.s3-nix-channel = {
       wantedBy = [ "sockets.target" ];
       socketConfig = {
         ListenStream = cfg.listen;
@@ -69,12 +69,12 @@ in {
       };
     };
 
-    systemd.services.tarball-serve = {
+    systemd.services.s3-nix-channel = {
       description = "Nix Tarball Serve";
       wantedBy = [ "multi-user.target" ];
 
       after = [ "network.target" ];
-      requires = [ "tarball-serve.socket" ];
+      requires = [ "s3-nix-channel.socket" ];
 
       serviceConfig = {
         Type = "notify";

@@ -40,7 +40,7 @@ For S3 buckets that need authentication, you must set
 You can serve from AWS S3 using this command:
 
 ```bash
-tarball-serve \
+s3-nix-channel \
   --endpoint https://s3.amazonaws.com \
   --bucket your-nix-channel-bucket \
   --base-url https://example.com \
@@ -58,7 +58,7 @@ export AWS_ENDPOINT_URL="https://nbg1.your-objectstorage.com"
 
 ### Authentication
 
-If authentication is required, `tarball-serve` can be started with
+If authentication is required, `s3-nix-channel` can be started with
 `--jwt-pem public.pem`, where `public.pem` is a RSA public key.  We
 currently support the `RS256` algorithm.
 

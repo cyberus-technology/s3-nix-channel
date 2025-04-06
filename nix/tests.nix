@@ -39,7 +39,7 @@ let
 
     environment.systemPackages = with pkgs; [ git jq ];
 
-    services.tarball-serve = {
+    services.s3-nix-channel = {
       enable = true;
       secretsFile = "${secretsFile}";
       listen = "0.0.0.0:80";
@@ -66,7 +66,7 @@ let
 in
 {
   canServeFiles = pkgs.nixosTest {
-    name = "tarball-serve";
+    name = "s3-nix-channel";
 
     nodes = {
       s3 = { config, ... }: {
@@ -97,7 +97,7 @@ in
           tarballServeCommon
         ];
 
-        services.tarball-serve = {
+        services.s3-nix-channel = {
           jwtPublicKey = "${rsaKeypair}/public.pem";
         };
       };
@@ -123,7 +123,7 @@ in
 
       ## Start our server that doesn't require authentication.
       servePublic.start()
-      servePublic.wait_for_unit("tarball-serve.service")
+      servePublic.wait_for_unit("s3-nix-channel.service")
 
       servePublic.succeed("curl -vL http://localhost/channel/thechannel-24.05.tar.xz > latest.tar.xz")
       servePublic.succeed("curl -vL http://localhost/permanent/tarball-1234.tar.xz > permanent.tar.xz")
@@ -136,7 +136,7 @@ in
 
       ## Start our server that requires authentication
       servePrivate.start()
-      servePrivate.wait_for_unit("tarball-serve.service")
+      servePrivate.wait_for_unit("s3-nix-channel.service")
 
       # Unauthorized requests are rejected.
       assert "401" == servePrivate.succeed("curl -s -o /dev/null -w '%{http_code}' http://localhost/channel/thechannel-24.05.tar.xz")
