@@ -23,12 +23,14 @@ in {
 
     listen = lib.mkOption {
       type = lib.types.str;
-      default = "localhost:3000";
+      default = "[::]:3000";
       description = ''
-        The IP and port to listen on.
+        Where to listen for connections. See
+        https://www.freedesktop.org/software/systemd/man/systemd.socket.html#ListenStream=
+        for more information.
       '';
     };
-    
+
     secretsFile = lib.mkOption {
       type = lib.types.path;
       description = ''
@@ -59,19 +61,27 @@ in {
   };
 
   config = lib.mkIf cfg.enable {
+    systemd.sockets.tarball-serve = {
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = cfg.listen;
+        Accept = "false";
+      };
+    };
+
     systemd.services.tarball-serve = {
       description = "Nix Tarball Serve";
       wantedBy = [ "multi-user.target" ];
 
       after = [ "network.target" ];
+      requires = [ "tarball-serve.socket" ];
 
       serviceConfig = {
         Type = "notify";
         NotifyAccess = "main";
-        
+
         ExecStart = ''
           ${lib.getExe cfg.package} \
-            --listen ${cfg.listen}  \
             --bucket ${cfg.bucket}  \
             --base-url ${cfg.baseUrl} \
             ${lib.optionalString (cfg.jwtPublicKey != null)

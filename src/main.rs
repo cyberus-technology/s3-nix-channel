@@ -334,6 +334,7 @@ async fn main() -> Result<()> {
             // listening socket.
             let std_listener = unsafe { std::net::TcpListener::from_raw_fd(socket_fd) };
 
+            info!("Got listening socket from systemd.");
             tokio::net::TcpListener::from_std(std_listener)?
         }
     };
