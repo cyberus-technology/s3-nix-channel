@@ -1,6 +1,3 @@
-mod error;
-mod persistent_config;
-
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
@@ -14,14 +11,13 @@ use axum::{
     routing::get,
     Router,
 };
-
 use clap::Parser;
-use error::RequestError;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
-use persistent_config::ChannelsConfig;
 use tokio::time::interval;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
+
+use s3_nix_channel::persistent_config::ChannelsConfig;
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -56,6 +52,39 @@ struct Args {
     /// for token verification.
     #[arg(long)]
     jwt_pem: Option<PathBuf>,
+}
+
+#[derive(thiserror::Error, Debug)]
+pub enum RequestError {
+    #[error("Failed to presign request for object {object_key:?}")]
+    PresignFailure { object_key: String },
+    #[error("Failed to create presign configuration")]
+    PresignConfigFailure,
+    #[error("There is no such channel: {channel_name:?}")]
+    NoSuchChannel { channel_name: String },
+    #[error("Only requests for .tar.xz files are supported: {file_name:?}")]
+    InvalidFile { file_name: String },
+    #[error("Invalid token: {reason}")]
+    InvalidToken { reason: String },
+    #[error("Unknown error")]
+    Unknown,
+}
+
+impl IntoResponse for RequestError {
+    fn into_response(self) -> axum::response::Response {
+        (
+            match self {
+                RequestError::NoSuchChannel { channel_name: _ } => StatusCode::NOT_FOUND,
+                RequestError::InvalidFile { file_name: _ } => StatusCode::BAD_REQUEST,
+                RequestError::InvalidToken { reason: _ } => StatusCode::FORBIDDEN,
+                RequestError::PresignConfigFailure
+                | RequestError::PresignFailure { object_key: _ }
+                | RequestError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
+            },
+            format!("{}", &self),
+        )
+            .into_response()
+    }
 }
 
 struct Config {
