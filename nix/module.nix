@@ -93,13 +93,15 @@ in {
         ProtectSystem = "strict";
         PrivateDevices = true;
         PrivateIPC = true;
+        PrivateUsers = true;
         ProcSubset = "pid";
         ProtectHostname = true;
         ProtectClock = true;
         ProtectKernelTunables = true;
         ProtectKernelModules = true;
         ProtectKernelLogs = true;
-        ProtectControlGroups = "strict";
+        # TODO This can be strict on systemd 257. But 24.11 still has 256.
+        ProtectControlGroups = true;
         ProtectHome = true;
         LockPersonality = true;
         MemoryDenyWriteExecute = true;
