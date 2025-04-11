@@ -174,10 +174,15 @@ async fn auth_middleware(
     validation.set_required_spec_claims(&["exp"]);
 
     match extract_auth_password(request.headers())
-        .ok_or_else(|| anyhow!("Missing Authorization header"))
+        .ok_or_else(|| RequestError::InvalidToken {
+            reason: "Missing Authorization header".to_owned(),
+        })
         .and_then(|jwt_str| {
-            jsonwebtoken::decode::<Claims>(&jwt_str, &decoding_key, &validation)
-                .context("Failed to decode token")
+            jsonwebtoken::decode::<Claims>(&jwt_str, &decoding_key, &validation).map_err(|e| {
+                RequestError::InvalidToken {
+                    reason: e.to_string(),
+                }
+            })
         }) {
         Ok(claim) => {
             debug!("Claim {:?}", claim)
