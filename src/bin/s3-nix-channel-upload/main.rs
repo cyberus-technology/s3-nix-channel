@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -53,7 +53,7 @@ impl Args {
                 channel: _,
                 file: _,
                 create: _,
-            } => &bucket,
+            } => bucket,
         }
     }
 }
@@ -79,6 +79,12 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
     Ok(())
 }
 
+async fn publish(s3_client: &Client, _channel: &str, _file: &Path, _create: bool) -> Result<()> {
+    let _config = s3_client.load_channels_config().await?;
+
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -89,10 +95,10 @@ async fn main() -> Result<()> {
         Commands::ShowChannel { bucket: _, channel } => show_channel(&s3_client, &channel).await?,
         Commands::Publish {
             bucket: _,
-            channel: _,
-            file: _,
-            create: _,
-        } => todo!(),
+            channel,
+            file,
+            create,
+        } => publish(&s3_client, &channel, &file, create).await?,
     }
 
     Ok(())
