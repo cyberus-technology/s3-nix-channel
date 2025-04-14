@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use anyhow::{anyhow, Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 
-use crate::{error::RequestError, persistent_config::ChannelsConfig};
+use crate::{error::RequestError, persistent::ChannelsConfig};
 
 pub struct Client {
     client: aws_sdk_s3::Client,

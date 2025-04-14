@@ -16,7 +16,7 @@ use tokio::time::interval;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
-use s3_nix_channel::{error::RequestError, persistent_config::ChannelsConfig};
+use s3_nix_channel::{error::RequestError, persistent::ChannelsConfig};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
