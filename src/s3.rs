@@ -1,6 +1,7 @@
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Context, Result};
+use aws_sdk_s3::primitives::ByteStream;
 
 use crate::{error::RequestError, persistent_config::ChannelsConfig};
 
@@ -47,5 +48,31 @@ impl Client {
             })?
             .uri()
             .to_string())
+    }
+
+    /// Upload a tarball to the persistent store. Doesn't update any channel.
+    pub async fn upload_tarball(&self, object_key: &str, file: &Path) -> Result<()> {
+        if !object_key.ends_with(".tar.xz") {
+            return Err(anyhow!(
+                "Invalid file ending. Only .tar.xz is supported: {object_key}"
+            ));
+        }
+
+        let data = ByteStream::read_from()
+            .path(file)
+            .build()
+            .await
+            .context("Failed to read input file")?;
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(object_key)
+            .body(data)
+            .send()
+            .await
+            .context("Failed to upload file")?;
+
+        Ok(())
     }
 }
