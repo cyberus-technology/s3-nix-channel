@@ -48,6 +48,10 @@ async fn read_file(
 }
 
 impl ChannelsConfig {
+    pub fn channels(&self) -> impl Iterator<Item = &str> {
+        self.channels.keys().map(|s| s.as_ref())
+    }
+
     pub fn latest_object_key(&self, channel_name: &str) -> Option<&str> {
         self.channels.get(channel_name).map(|s| s.as_str())
     }
