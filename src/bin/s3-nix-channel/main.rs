@@ -54,7 +54,7 @@ struct Args {
 }
 
 struct Config {
-    s3_client: s3_nix_channel::s3::Client,
+    s3_client: s3_nix_channel::persistent::Client,
     base_url: String,
     update_interval: Duration,
     channels: ArcSwap<ChannelsConfig>,
@@ -245,7 +245,7 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let s3_client = s3_nix_channel::s3::Client::new_from_env(&args.bucket).await?;
+    let s3_client = s3_nix_channel::persistent::Client::new_from_env(&args.bucket).await?;
 
     let channels = s3_client.load_channels_config().await?;
     let jwt_public_key = args

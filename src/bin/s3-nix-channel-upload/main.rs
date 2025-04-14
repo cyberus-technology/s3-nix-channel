@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use s3_nix_channel::s3::Client;
+use s3_nix_channel::persistent::Client;
 
 #[derive(Subcommand, Debug)]
 enum Commands {
@@ -88,7 +88,7 @@ async fn publish(s3_client: &Client, _channel: &str, _file: &Path, _create: bool
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let s3_client = s3_nix_channel::s3::Client::new_from_env(args.bucket()).await?;
+    let s3_client = Client::new_from_env(args.bucket()).await?;
 
     match args.commands {
         Commands::ListChannels { bucket: _ } => list_channels(&s3_client).await?,
