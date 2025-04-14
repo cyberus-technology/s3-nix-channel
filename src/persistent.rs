@@ -6,7 +6,7 @@ use std::{
 use anyhow::{anyhow, Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
 use axum::body::Bytes;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
 use crate::error::RequestError;
@@ -22,10 +22,14 @@ struct PersistentChannelsConfig {
 }
 
 /// The persistent configuration of a single channel.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChannelConfig {
     /// The latest element in the channel. If this is foo, users can download it as channel/foo.tar.gz.
     pub latest: String,
+
+    /// Previous tarballs in this channel.
+    #[serde(default)]
+    pub previous: Vec<String>,
 }
 
 /// The list of channels we know about and their latest object keys.
@@ -35,70 +39,13 @@ pub struct ChannelsConfig {
     channels: BTreeMap<String, ChannelConfig>,
 }
 
-/// Read a file from the bucket..
-async fn read_file(
-    s3_client: &aws_sdk_s3::Client,
-    bucket: &str,
-    object_key: &str,
-) -> Result<Bytes> {
-    let response = s3_client
-        .get_object()
-        .bucket(bucket)
-        .key(object_key)
-        .send()
-        .await
-        // TODO Better error.
-        .with_context(|| format!("Failed to read: {object_key}"))?;
-
-    Ok(response.body.collect().await?.into_bytes())
-}
-
 impl ChannelsConfig {
     pub fn channels(&self) -> impl Iterator<Item = &str> {
         self.channels.keys().map(|s| s.as_ref())
     }
 
     pub fn channel(&self, channel_name: &str) -> Option<ChannelConfig> {
-        self.channels.get(channel_name).map(|c| c.clone())
-    }
-
-    /// Read the channels configuration from the bucket.
-    pub async fn from_s3_bucket(
-        s3_client: &aws_sdk_s3::Client,
-        bucket: &str,
-    ) -> Result<ChannelsConfig> {
-        let persistent_config: PersistentChannelsConfig =
-            serde_json::from_slice(&read_file(s3_client, bucket, "channels.json").await?)
-                .context("Failed to deserialize channels.json")?;
-
-        debug!("Loaded channel config: {persistent_config:?}");
-
-        let mut channels_config = ChannelsConfig::default();
-
-        for channel_name in persistent_config.channels {
-            let config_file = format!("{channel_name}.json");
-            if let Ok(config) = read_file(s3_client, bucket, &config_file)
-                .await
-                .context("Failed to read channel config")
-                .and_then(|bytes| {
-                    serde_json::from_slice::<ChannelConfig>(&bytes)
-                        .context("Failed to deserialize channel configuration")
-                })
-            {
-                info!("Channel {channel_name} points to: {}", config.latest);
-                channels_config.channels.insert(
-                    channel_name,
-                    ChannelConfig {
-                        latest: config.latest,
-                    },
-                );
-            } else {
-                error!("Configured channel {channel_name:?} has no corresponding {config_file} in the bucket. Ignoring!");
-                continue;
-            }
-        }
-
-        Ok(channels_config)
+        self.channels.get(channel_name).cloned()
     }
 }
 
@@ -122,8 +69,54 @@ impl Client {
         })
     }
 
+    async fn read_file(&self, object_key: &str) -> Result<Bytes> {
+        let response = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(object_key)
+            .send()
+            .await
+            // TODO Better error.
+            .with_context(|| format!("Failed to read: {object_key}"))?;
+
+        Ok(response.body.collect().await?.into_bytes())
+    }
+
     pub async fn load_channels_config(&self) -> Result<ChannelsConfig> {
-        ChannelsConfig::from_s3_bucket(&self.client, &self.bucket).await
+        let persistent_config: PersistentChannelsConfig =
+            serde_json::from_slice(&self.read_file("channels.json").await?)
+                .context("Failed to deserialize channels.json")?;
+
+        debug!("Loaded channel config: {persistent_config:?}");
+
+        let mut channels_config = ChannelsConfig::default();
+
+        for channel_name in persistent_config.channels {
+            let config_file = format!("{channel_name}.json");
+            if let Ok(channel_config) = self
+                .read_file(&config_file)
+                .await
+                .context("Failed to read channel config")
+                .and_then(|bytes| {
+                    serde_json::from_slice::<ChannelConfig>(&bytes)
+                        .context("Failed to deserialize channel configuration")
+                })
+            {
+                info!(
+                    "Channel {channel_name} points to: {}",
+                    channel_config.latest
+                );
+                channels_config
+                    .channels
+                    .insert(channel_name, channel_config);
+            } else {
+                error!("Configured channel {channel_name:?} has no corresponding {config_file} in the bucket. Ignoring!");
+                continue;
+            }
+        }
+
+        Ok(channels_config)
     }
 
     pub async fn sign_request(&self, object_key: &str) -> Result<String, RequestError> {
@@ -147,14 +140,8 @@ impl Client {
             .to_string())
     }
 
-    /// Upload a tarball to the persistent store. Doesn't update any channel.
-    pub async fn upload_tarball(&self, object_key: &str, file: &Path) -> Result<()> {
-        if !object_key.ends_with(".tar.xz") {
-            return Err(anyhow!(
-                "Invalid file ending. Only .tar.xz is supported: {object_key}"
-            ));
-        }
-
+    /// Upload a file to the persistent store. Doesn't update any channel.
+    async fn write_file(&self, object_key: &str, file: &Path) -> Result<()> {
         let data = ByteStream::read_from()
             .path(file)
             .build()
@@ -171,5 +158,57 @@ impl Client {
             .context("Failed to upload file")?;
 
         Ok(())
+    }
+
+    async fn write_data(&self, object_key: &str, data: Vec<u8>) -> Result<()> {
+        let data = ByteStream::from(data.to_owned());
+
+        self.client
+            .put_object()
+            .bucket(&self.bucket)
+            .key(object_key)
+            .body(data)
+            .send()
+            .await
+            .context("Failed to upload file")?;
+
+        Ok(())
+    }
+
+    /// Update the channel to point to the given file.
+    ///
+    /// **Note:** This operation is not concurrency-safe! Clients must
+    /// serialize update operations.
+    pub async fn update_channel(&self, channel_name: &str, file: &Path) -> Result<()> {
+        if !file.ends_with(".tar.xz") {
+            return Err(anyhow!(
+                "Invalid file ending. Only .tar.xz is supported: {}",
+                file.display()
+            ));
+        }
+
+        let channels_config = self.load_channels_config().await?;
+        let mut channel = channels_config
+            .channel(channel_name)
+            .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
+
+        let object_key = file
+            .file_name()
+            .ok_or_else(|| anyhow!("No file name: {}", file.display()))?
+            .to_str()
+            .ok_or_else(|| anyhow!("File name needs to be valid UTF-8: {}", file.display()))?;
+
+        self.write_file(object_key, file).await?;
+
+        channel.previous.push(channel.latest);
+        channel.latest = object_key.to_owned();
+
+        self.write_data(
+            &format!("{channel_name}.json"),
+            serde_json::to_vec_pretty(&channel).context("Failed to serialize channel")?,
+        )
+        .await.context("Failed to update channel. This leaked the tarball! Remove it manually, if this is an issue.")?;
+
+        todo!()
     }
 }

@@ -28,10 +28,6 @@ enum Commands {
 
         /// The file to upload.
         file: PathBuf,
-
-        /// Create the channel if it doesn't exist.
-        #[arg(long, default_value_t = false)]
-        create: bool,
     },
 }
 
@@ -52,7 +48,6 @@ impl Args {
                 bucket,
                 channel: _,
                 file: _,
-                create: _,
             } => bucket,
         }
     }
@@ -80,8 +75,11 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
     Ok(())
 }
 
-async fn publish(s3_client: &Client, _channel: &str, _file: &Path, _create: bool) -> Result<()> {
-    let _config = s3_client.load_channels_config().await?;
+async fn publish(s3_client: &Client, channel: &str, file: &Path) -> Result<()> {
+    s3_client
+        .update_channel(channel, file)
+        .await
+        .context("Failed to update channel")?;
 
     Ok(())
 }
@@ -98,8 +96,7 @@ async fn main() -> Result<()> {
             bucket: _,
             channel,
             file,
-            create,
-        } => publish(&s3_client, &channel, &file, create).await?,
+        } => publish(&s3_client, &channel, &file).await?,
     }
 
     Ok(())
