@@ -68,7 +68,8 @@ impl Config {
         // The config may be updated concurrently. We can't hand out a
         // reference.
         channels
-            .latest_object_key(channel_name)
+            .channel(channel_name)
+            .map(|c| c.latest)
             .map(|x| x.to_owned())
     }
 }

@@ -23,16 +23,16 @@ struct PersistentChannelsConfig {
 
 /// The persistent configuration of a single channel.
 #[derive(Deserialize, Debug, Clone)]
-struct PersistentChannelConfig {
+pub struct ChannelConfig {
     /// The latest element in the channel. If this is foo, users can download it as channel/foo.tar.gz.
-    latest: String,
+    pub latest: String,
 }
 
 /// The list of channels we know about and their latest object keys.
 #[derive(Debug, Default, Clone)]
 pub struct ChannelsConfig {
     /// A mapping from channel name to latest object key.
-    channels: BTreeMap<String, String>,
+    channels: BTreeMap<String, ChannelConfig>,
 }
 
 /// Read a file from the bucket..
@@ -58,8 +58,8 @@ impl ChannelsConfig {
         self.channels.keys().map(|s| s.as_ref())
     }
 
-    pub fn latest_object_key(&self, channel_name: &str) -> Option<&str> {
-        self.channels.get(channel_name).map(|s| s.as_str())
+    pub fn channel(&self, channel_name: &str) -> Option<ChannelConfig> {
+        self.channels.get(channel_name).map(|c| c.clone())
     }
 
     /// Read the channels configuration from the bucket.
@@ -81,12 +81,17 @@ impl ChannelsConfig {
                 .await
                 .context("Failed to read channel config")
                 .and_then(|bytes| {
-                    serde_json::from_slice::<PersistentChannelConfig>(&bytes)
+                    serde_json::from_slice::<ChannelConfig>(&bytes)
                         .context("Failed to deserialize channel configuration")
                 })
             {
                 info!("Channel {channel_name} points to: {}", config.latest);
-                channels_config.channels.insert(channel_name, config.latest);
+                channels_config.channels.insert(
+                    channel_name,
+                    ChannelConfig {
+                        latest: config.latest,
+                    },
+                );
             } else {
                 error!("Configured channel {channel_name:?} has no corresponding {config_file} in the bucket. Ignoring!");
                 continue;

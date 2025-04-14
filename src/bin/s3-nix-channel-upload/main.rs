@@ -72,7 +72,8 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
     println!(
         "Latest: {}",
         config
-            .latest_object_key(channel)
+            .channel(channel)
+            .map(|c| c.latest)
             .context("No such channel")?
     );
 
