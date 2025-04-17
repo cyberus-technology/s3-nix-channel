@@ -1,3 +1,6 @@
+//! This module tries to abstract the persistent storage backend. The
+//! abstraction is not perfect as S3 leaks through pretty heavily. :)
+
 use std::{
     collections::BTreeMap,
     {path::Path, time::Duration},
@@ -56,6 +59,7 @@ pub struct Client {
 
 impl Client {
     /// Open an S3 client with configuration from the environment.
+    // TODO Return a custom error type.
     pub async fn new_from_env(bucket: &str) -> Result<Client> {
         let amzn_config = aws_config::load_from_env().await;
         let s3_config = aws_sdk_s3::config::Builder::from(&amzn_config)
@@ -69,6 +73,9 @@ impl Client {
         })
     }
 
+    /// Read a file from S3 into memory. This should only be used for
+    /// small files.
+    // TODO Return a custom error type.
     async fn read_file(&self, object_key: &str) -> Result<Bytes> {
         let response = self
             .client
@@ -83,6 +90,7 @@ impl Client {
         Ok(response.body.collect().await?.into_bytes())
     }
 
+    // TODO Return a custom error type.
     pub async fn load_channels_config(&self) -> Result<ChannelsConfig> {
         let persistent_config: PersistentChannelsConfig =
             serde_json::from_slice(&self.read_file("channels.json").await?)
@@ -119,6 +127,7 @@ impl Client {
         Ok(channels_config)
     }
 
+    /// Return a signed request for a specific object key in the bucket.
     pub async fn sign_request(&self, object_key: &str) -> Result<String, RequestError> {
         use aws_sdk_s3::presigning::PresigningConfig;
 
