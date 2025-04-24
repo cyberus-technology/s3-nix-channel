@@ -2,7 +2,6 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Context, Result};
 use arc_swap::ArcSwap;
-use aws_sdk_s3::presigning::PresigningConfig;
 use axum::{
     extract::{Path, Request, State},
     http::{header::LINK, HeaderMap, HeaderValue, StatusCode},
@@ -17,7 +16,7 @@ use tokio::time::interval;
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
-use s3_nix_channel::persistent_config::ChannelsConfig;
+use s3_nix_channel::{error::RequestError, persistent::ChannelsConfig};
 
 /// A program to serve a S3 bucket via the Nix Lockable Tarball Protocol.
 #[derive(Parser, Debug)]
@@ -54,42 +53,8 @@ struct Args {
     jwt_pem: Option<PathBuf>,
 }
 
-#[derive(thiserror::Error, Debug)]
-pub enum RequestError {
-    #[error("Failed to presign request for object {object_key:?}")]
-    PresignFailure { object_key: String },
-    #[error("Failed to create presign configuration")]
-    PresignConfigFailure,
-    #[error("There is no such channel: {channel_name:?}")]
-    NoSuchChannel { channel_name: String },
-    #[error("Only requests for .tar.xz files are supported: {file_name:?}")]
-    InvalidFile { file_name: String },
-    #[error("Invalid token: {reason}")]
-    InvalidToken { reason: String },
-    #[error("Unknown error")]
-    Unknown,
-}
-
-impl IntoResponse for RequestError {
-    fn into_response(self) -> axum::response::Response {
-        (
-            match self {
-                RequestError::NoSuchChannel { channel_name: _ } => StatusCode::NOT_FOUND,
-                RequestError::InvalidFile { file_name: _ } => StatusCode::BAD_REQUEST,
-                RequestError::InvalidToken { reason: _ } => StatusCode::FORBIDDEN,
-                RequestError::PresignConfigFailure
-                | RequestError::PresignFailure { object_key: _ }
-                | RequestError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,
-            },
-            format!("{}", &self),
-        )
-            .into_response()
-    }
-}
-
 struct Config {
-    s3_client: aws_sdk_s3::Client,
-    bucket: String,
+    s3_client: s3_nix_channel::persistent::Client,
     base_url: String,
     update_interval: Duration,
     channels: ArcSwap<ChannelsConfig>,
@@ -103,28 +68,10 @@ impl Config {
         // The config may be updated concurrently. We can't hand out a
         // reference.
         channels
-            .latest_object_key(channel_name)
+            .channel(channel_name)
+            .map(|c| c.latest)
             .map(|x| x.to_owned())
     }
-}
-
-async fn sign_request(config: &Config, object_key: &str) -> Result<String, RequestError> {
-    Ok(config
-        .s3_client
-        .get_object()
-        .bucket(&config.bucket)
-        .key(object_key)
-        // TODO Should expiration be configurable?
-        .presigned(
-            PresigningConfig::expires_in(Duration::from_secs(600))
-                .map_err(|_e| RequestError::PresignConfigFailure)?,
-        )
-        .await
-        .map_err(|_e| RequestError::PresignFailure {
-            object_key: object_key.to_owned(),
-        })?
-        .uri()
-        .to_string())
 }
 
 /// Redirect to the latest tarball of the requested channel.
@@ -160,7 +107,12 @@ async fn handle_channel(
 
     Ok((
         headers,
-        Redirect::temporary(&sign_request(&config, &format!("{latest_object}.tar.xz")).await?),
+        Redirect::temporary(
+            &config
+                .s3_client
+                .sign_request(&format!("{latest_object}.tar.xz"))
+                .await?,
+        ),
     ))
 }
 
@@ -178,7 +130,6 @@ fn extract_auth_password(headers: &HeaderMap) -> Option<String> {
     let header_value = header.to_str().ok()?;
 
     let credentials = header_value.strip_prefix("Basic ")?.to_owned();
-
     let credentials = String::from_utf8(BASE64_STANDARD.decode(&credentials).ok()?).ok()?;
 
     let pw = credentials
@@ -257,7 +208,9 @@ async fn handle_persistent(
         });
     }
 
-    Ok(Redirect::temporary(&sign_request(&config, &path).await?))
+    Ok(Redirect::temporary(
+        &config.s3_client.sign_request(&path).await?,
+    ))
 }
 
 /// Poll the bucket for changes of the configuration.
@@ -270,14 +223,13 @@ async fn poll_config_file(state: &Config) {
     loop {
         interval.tick().await;
 
-        let new_channels =
-            match ChannelsConfig::from_s3_bucket(&state.s3_client, &state.bucket).await {
-                Ok(channels) => channels,
-                Err(e) => {
-                    error!("Failed to load new config (will try again later): {e}");
-                    continue;
-                }
-            };
+        let new_channels = match state.s3_client.load_channels_config().await {
+            Ok(channels) => channels,
+            Err(e) => {
+                error!("Failed to load new config (will try again later): {e}");
+                continue;
+            }
+        };
 
         state.channels.store(Arc::new(new_channels));
         info!("Successfully refreshed channel state.")
@@ -294,14 +246,9 @@ async fn main() -> Result<()> {
         )
         .init();
 
-    let amzn_config = aws_config::load_from_env().await;
-    let s3_config = aws_sdk_s3::config::Builder::from(&amzn_config)
-        // TODO For minio compat. Should this be configurable?
-        .force_path_style(true)
-        .build();
-    let s3_client = aws_sdk_s3::Client::from_conf(s3_config);
+    let s3_client = s3_nix_channel::persistent::Client::new_from_env(&args.bucket).await?;
 
-    let channels = ChannelsConfig::from_s3_bucket(&s3_client, &args.bucket).await?;
+    let channels = s3_client.load_channels_config().await?;
     let jwt_public_key = args
         .jwt_pem
         .map(|pem_file| {
@@ -319,7 +266,6 @@ async fn main() -> Result<()> {
 
     let config = Arc::new(Config {
         s3_client,
-        bucket: args.bucket,
         base_url: args.base_url,
         update_interval: Duration::from_secs(args.config_update_seconds),
         channels: ArcSwap::new(Arc::new(channels)),

@@ -8,6 +8,9 @@ license = "AGPL-3.0-or-later"
 [[bin]]
 name = "s3-nix-channel"
 
+[[bin]]
+name = "s3-nix-channel-upload"
+
 [dependencies]
 anyhow = "1.0.97"
 arc-swap = "1.7.1"

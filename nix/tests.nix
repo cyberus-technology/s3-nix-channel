@@ -11,7 +11,7 @@ let
     AWS_ACCESS_KEY_ID=${accessKey}
     AWS_SECRET_ACCESS_KEY=${secretKey}
     AWS_REGION=${region}
-    AWS_ENDPOINT_URL="http://s3:9000"
+    AWS_ENDPOINT_URL=http://s3:9000
   '';
 
   channelsConfig = pkgs.writeText "channels.json" (builtins.toJSON {
@@ -26,18 +26,31 @@ let
     {
       nativeBuildInputs = [ pkgs.libarchive ];
     } ''
+    mkdir $out
+
     mkdir foo
     touch foo/hello
 
-    tar -cJf $out foo
+    # The original tarball.
+    tar -cJf $out/tarball-1234.tar.xz foo
+
+    # Create an updated tarball.
+    touch foo/world
+    tar -cJf $out/tarball-1235.tar.xz foo
   '';
 
-  tarballServeCommon = { pkgs, ... }: {
+  tarballServeCommon = { config, pkgs, ... }: {
     nix.extraOptions = ''
       experimental-features = nix-command flakes
     '';
 
-    environment.systemPackages = with pkgs; [ git jq ];
+    environment.systemPackages = with pkgs; [
+      # For tarball uploads.
+      config.services.s3-nix-channel.package
+
+      git
+      jq
+    ];
 
     services.s3-nix-channel = {
       enable = true;
@@ -117,7 +130,7 @@ in
       s3.succeed("mkdir content")
       s3.copy_from_host("${channelsConfig}", "content/channels.json");
       s3.copy_from_host("${thechannelConfig}", "content/thechannel-24.05.json");
-      s3.copy_from_host("${tarball}", "content/tarball-1234.tar.xz");
+      s3.copy_from_host("${tarball}/tarball-1234.tar.xz", "content/tarball-1234.tar.xz");
 
       s3.succeed("mc cp content/* local/${bucket}/")
 
@@ -128,11 +141,9 @@ in
       servePublic.succeed("curl -vL http://localhost/channel/thechannel-24.05.tar.xz > latest.tar.xz")
       servePublic.succeed("curl -vL http://localhost/permanent/tarball-1234.tar.xz > permanent.tar.xz")
 
-      servePublic.copy_from_host("${tarball}", "reference.tar.xz")
+      servePublic.copy_from_host("${tarball}/tarball-1234.tar.xz", "reference.tar.xz")
       servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
       servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
-
-      servePublic.shutdown()
 
       ## Start our server that requires authentication
       servePrivate.start()
@@ -156,6 +167,17 @@ in
 
       # Check whether the lock file records the right permanent URL.
       assert "http://localhost/permanent/tarball-1234.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
+
+      # Check whether we can update the tarball.
+      servePrivate.copy_from_host("${tarball}/tarball-1235.tar.xz", "tarball-1235.tar.xz")
+      print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} thechannel-24.05 tarball-1235.tar.xz"))
+
+      # Force a reload to pick up the new version.
+      servePrivate.succeed("systemctl restart s3-nix-channel.service")
+
+      # Check whether the flake updates to the new version
+      servePrivate.succeed("cd flake ; nix flake update")
+      assert "http://localhost/permanent/tarball-1235.tar.xz\n" == servePrivate.succeed("jq -r .nodes.thechannel.locked.url flake/flake.lock")
     '';
   };
 }
