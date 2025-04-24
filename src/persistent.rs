@@ -151,9 +151,9 @@ impl Client {
 
     /// Upload a file to the persistent store. Doesn't update any channel.
     async fn write_file(&self, object_key: &str, file: &Path) -> Result<()> {
-        let data = ByteStream::read_from()
-            .path(file)
-            .build()
+        // We would want to stream the file and not load it all in
+        // memory, but it results in XAmzContentSHA256Mismatch. :(
+        let data = tokio::fs::read(file)
             .await
             .context("Failed to read input file")?;
 
@@ -161,10 +161,10 @@ impl Client {
             .put_object()
             .bucket(&self.bucket)
             .key(object_key)
-            .body(data)
+            .body(data.into())
             .send()
             .await
-            .context("Failed to upload file")?;
+            .with_context(|| format!("Failed to upload file: {}", file.display()))?;
 
         Ok(())
     }
@@ -189,7 +189,14 @@ impl Client {
     /// **Note:** This operation is not concurrency-safe! Clients must
     /// serialize update operations.
     pub async fn update_channel(&self, channel_name: &str, file: &Path) -> Result<()> {
-        if !file.ends_with(".tar.xz") {
+        // Path::ends_with and Path::extension unfortunately don't do
+        // what we need.
+        if !file
+            .as_os_str()
+            .to_str()
+            .ok_or_else(|| anyhow!("File name is not valid UTF-8"))?
+            .ends_with(".tar.xz")
+        {
             return Err(anyhow!(
                 "Invalid file ending. Only .tar.xz is supported: {}",
                 file.display()
@@ -205,12 +212,24 @@ impl Client {
             .file_name()
             .ok_or_else(|| anyhow!("No file name: {}", file.display()))?
             .to_str()
-            .ok_or_else(|| anyhow!("File name needs to be valid UTF-8: {}", file.display()))?;
+            .ok_or_else(|| anyhow!("File name needs to be valid UTF-8: {}", file.display()))?
+            .to_owned();
 
-        self.write_file(object_key, file).await?;
+        let basename = object_key
+            .strip_suffix(".tar.xz")
+            // This unwrap is safe, because we checked the suffix earlier.
+            .unwrap()
+            .to_owned();
+
+        self.write_file(&object_key, file).await?;
+
+        println!(
+            "Updating channel {channel_name} from {} to {}.",
+            channel.latest, object_key
+        );
 
         channel.previous.push(channel.latest);
-        channel.latest = object_key.to_owned();
+        channel.latest = basename;
 
         self.write_data(
             &format!("{channel_name}.json"),
@@ -218,6 +237,6 @@ impl Client {
         )
         .await.context("Failed to update channel. This leaked the tarball! Remove it manually, if this is an issue.")?;
 
-        todo!()
+        Ok(())
     }
 }
