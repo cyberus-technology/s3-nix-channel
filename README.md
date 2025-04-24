@@ -148,6 +148,15 @@ This means requests to `/channel/nixos-25.05.tar.xz` will redirect to
 the tarball at `/permanent/nixos-25.05-2025-05-15.tar.xz`, with
 appropriate immutable link headers.
 
+### Updating Channels
+
+New tarballs can be uploaded with `s3-nix-channel-upload`. You'll need
+to configure authentication via environment variables (see above).
+
+```bash
+s3-nix-channel-upload publish your-nix-channel-bucket nixos-25.05 nixos-25.05-2025-05-20.tar.xz
+```
+
 ## 👥 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
