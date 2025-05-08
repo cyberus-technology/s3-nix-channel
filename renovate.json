@@ -1,6 +1,7 @@
 {
   "extends": [
-    "config:recommended"
+    "config:recommended",
+    "group:all"
   ],
   "nix": {
     "enabled": true
