@@ -4,6 +4,6 @@
     "group:all"
   ],
   "nix": {
-    "enabled": true
+    "enabled": false
   }
 }
