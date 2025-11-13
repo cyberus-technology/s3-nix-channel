@@ -14,106 +14,122 @@ let
     AWS_ENDPOINT_URL=http://s3:9000
   '';
 
-  channelsConfig = pkgs.writeText "channels.json" (builtins.toJSON {
-    channels = [ "thechannel-24.05" ];
-  });
+  channelsConfig = pkgs.writeText "channels.json" (
+    builtins.toJSON {
+      channels = [ "thechannel-24.05" ];
+    }
+  );
 
-  thechannelConfig = pkgs.writeText "thechannel-24.05.json" (builtins.toJSON {
-    latest = "tarball-1234";
-  });
+  thechannelConfig = pkgs.writeText "thechannel-24.05.json" (
+    builtins.toJSON {
+      latest = "tarball-1234";
+    }
+  );
 
-  tarball = pkgs.runCommand "tarball-1234.tar.xz"
+  tarball =
+    pkgs.runCommand "tarball-1234.tar.xz"
+      {
+        nativeBuildInputs = [ pkgs.libarchive ];
+      }
+      ''
+        mkdir $out
+
+        mkdir foo
+        touch foo/hello
+
+        # The original tarball.
+        tar -cJf $out/tarball-1234.tar.xz foo
+
+        # Create an updated tarball.
+        touch foo/world
+        tar -cJf $out/tarball-1235.tar.xz foo
+      '';
+
+  tarballServeCommon =
+    { config, pkgs, ... }:
     {
-      nativeBuildInputs = [ pkgs.libarchive ];
-    } ''
-    mkdir $out
+      nix.extraOptions = ''
+        experimental-features = nix-command flakes
+      '';
 
-    mkdir foo
-    touch foo/hello
+      environment.systemPackages = with pkgs; [
+        # For tarball uploads.
+        config.services.s3-nix-channel.package
 
-    # The original tarball.
-    tar -cJf $out/tarball-1234.tar.xz foo
-
-    # Create an updated tarball.
-    touch foo/world
-    tar -cJf $out/tarball-1235.tar.xz foo
-  '';
-
-  tarballServeCommon = { config, pkgs, ... }: {
-    nix.extraOptions = ''
-      experimental-features = nix-command flakes
-    '';
-
-    environment.systemPackages = with pkgs; [
-      # For tarball uploads.
-      config.services.s3-nix-channel.package
-
-      git
-      jq
-    ];
-
-    services.s3-nix-channel = {
-      enable = true;
-      secretsFile = "${secretsFile}";
-      listen = "0.0.0.0:80";
-      baseUrl = "http://localhost";
-
-      inherit bucket;
-    };
-  };
-
-  rsaKeypair = pkgs.runCommand "rsa-keypair"
-    {
-      nativeBuildInputs = [
-        pkgs.openssl
-        pkgs.openssh
-        pkgs.jwt-cli
+        git
+        jq
       ];
-    } ''
-    mkdir -p $out
-    ssh-keygen -t rsa -b 4096 -E SHA256 -m PEM -P "" -f $out/private.pem
-    openssl rsa -pubout -in $out/private.pem -out $out/public.pem
 
-    jwt encode --alg RS256 --exp=100y -S @$out/private.pem > $out/jwt
-  '';
+      services.s3-nix-channel = {
+        enable = true;
+        secretsFile = "${secretsFile}";
+        listen = "0.0.0.0:80";
+        baseUrl = "http://localhost";
+
+        inherit bucket;
+      };
+    };
+
+  rsaKeypair =
+    pkgs.runCommand "rsa-keypair"
+      {
+        nativeBuildInputs = [
+          pkgs.openssl
+          pkgs.openssh
+          pkgs.jwt-cli
+        ];
+      }
+      ''
+        mkdir -p $out
+        ssh-keygen -t rsa -b 4096 -E SHA256 -m PEM -P "" -f $out/private.pem
+        openssl rsa -pubout -in $out/private.pem -out $out/public.pem
+
+        jwt encode --alg RS256 --exp=100y -S @$out/private.pem > $out/jwt
+      '';
 in
 {
-  canServeFiles = pkgs.nixosTest {
+  canServeFiles = pkgs.testers.nixosTest {
     name = "s3-nix-channel";
 
     nodes = {
-      s3 = { config, ... }: {
-        services.minio = {
-          inherit accessKey secretKey region;
+      s3 =
+        { config, ... }:
+        {
+          services.minio = {
+            inherit accessKey secretKey region;
 
-          enable = true;
-          # minio listens by default on port 9000.
+            enable = true;
+            # minio listens by default on port 9000.
+          };
+
+          environment.systemPackages = with pkgs; [
+            minio-client
+          ];
+
+          networking.firewall.enable = false;
         };
 
-        environment.systemPackages = with pkgs; [
-          minio-client
-        ];
-
-        networking.firewall.enable = false;
-      };
-
-      servePublic = { config, pkgs, ... }: {
-        imports = [
-          self.nixosModules.default
-          tarballServeCommon
-        ];
-      };
-
-      servePrivate = { config, pkgs, ... }: {
-        imports = [
-          self.nixosModules.default
-          tarballServeCommon
-        ];
-
-        services.s3-nix-channel = {
-          jwtPublicKey = "${rsaKeypair}/public.pem";
+      servePublic =
+        { config, pkgs, ... }:
+        {
+          imports = [
+            self.nixosModules.default
+            tarballServeCommon
+          ];
         };
-      };
+
+      servePrivate =
+        { config, pkgs, ... }:
+        {
+          imports = [
+            self.nixosModules.default
+            tarballServeCommon
+          ];
+
+          services.s3-nix-channel = {
+            jwtPublicKey = "${rsaKeypair}/public.pem";
+          };
+        };
 
     };
 
