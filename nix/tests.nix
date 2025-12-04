@@ -16,13 +16,23 @@ let
 
   channelsConfig = pkgs.writeText "channels.json" (
     builtins.toJSON {
-      channels = [ "thechannel-24.05" ];
+      channels = [
+        "thechannel-24.05"
+        "install-24.05"
+      ];
     }
   );
 
   thechannelConfig = pkgs.writeText "thechannel-24.05.json" (
     builtins.toJSON {
       latest = "tarball-1234";
+    }
+  );
+
+  installConfig = pkgs.writeText "install-24.05.json" (
+    builtins.toJSON {
+      latest = "media-1234";
+      file_extension = ".iso";
     }
   );
 
@@ -69,6 +79,21 @@ let
         inherit bucket;
       };
     };
+
+  isoImage =
+    pkgs.runCommand "media-1234.iso"
+      {
+        nativeBuildInputs = [ pkgs.cdrkit ];
+      }
+      ''
+        mkdir root
+        mkdir $out
+
+        genisoimage -o $out/media-1234.iso root/
+
+        touch root/updated
+        genisoimage -o $out/media-1235.iso root/
+      '';
 
   rsaKeypair =
     pkgs.runCommand "rsa-keypair"
@@ -145,8 +170,12 @@ in
 
       s3.succeed("mkdir content")
       s3.copy_from_host("${channelsConfig}", "content/channels.json");
+
       s3.copy_from_host("${thechannelConfig}", "content/thechannel-24.05.json");
       s3.copy_from_host("${tarball}/tarball-1234.tar.xz", "content/tarball-1234.tar.xz");
+
+      s3.copy_from_host("${installConfig}", "content/install-24.05.json")
+      s3.copy_from_host("${isoImage}/media-1234.iso", "content/media-1234.iso")
 
       s3.succeed("mc cp content/* local/${bucket}/")
 
@@ -160,6 +189,14 @@ in
       servePublic.copy_from_host("${tarball}/tarball-1234.tar.xz", "reference.tar.xz")
       servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
       servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
+
+      # Now the same with custom file endings
+      servePublic.succeed("curl -vL http://localhost/channel/install-24.05.iso > latest.iso")
+      servePublic.succeed("curl -vL http://localhost/permanent/media-1234.iso > permanent.iso")
+
+      servePublic.copy_from_host("${isoImage}/media-1234.iso", "reference.iso")
+      servePublic.succeed("cmp reference.iso latest.iso")
+      servePublic.succeed("cmp reference.iso permanent.iso")
 
       ## Start our server that requires authentication
       servePrivate.start()
@@ -187,6 +224,10 @@ in
       # Check whether we can update the tarball.
       servePrivate.copy_from_host("${tarball}/tarball-1235.tar.xz", "tarball-1235.tar.xz")
       print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} thechannel-24.05 tarball-1235.tar.xz"))
+
+      # Check whether we can update files with different extensions as well.
+      servePrivate.copy_from_host("${isoImage}/media-1235.iso", "media-1235.iso")
+      print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} install-24.05 media-1235.iso"))
 
       # Force a reload to pick up the new version.
       servePrivate.succeed("systemctl restart s3-nix-channel.service")
