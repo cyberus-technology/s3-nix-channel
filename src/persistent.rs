@@ -56,8 +56,8 @@ pub struct ChannelsConfig {
 }
 
 impl ChannelsConfig {
-    pub fn channels(&self) -> impl Iterator<Item = &str> {
-        self.channels.keys().map(|s| s.as_ref())
+    pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelConfig)> {
+        self.channels.iter().map(|(k, v)| (k.as_ref(), v))
     }
 
     pub fn channel(&self, channel_name: &str) -> Option<ChannelConfig> {
