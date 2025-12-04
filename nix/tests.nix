@@ -198,6 +198,11 @@ in
       servePublic.succeed("cmp reference.iso latest.iso")
       servePublic.succeed("cmp reference.iso permanent.iso")
 
+      # Check whether we don't accidentally serve the config files
+      servePublic.fail("curl --fail -vL http://localhost/channels.json")
+      servePublic.fail("curl --fail -vL http://localhost/thechannel-24.05.json")
+      servePublic.fail("curl --fail -vL http://localhost/install-24.05.json")
+
       ## Start our server that requires authentication
       servePrivate.start()
       servePrivate.wait_for_unit("s3-nix-channel.service")
