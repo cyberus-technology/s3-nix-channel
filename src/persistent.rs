@@ -28,7 +28,7 @@ struct PersistentChannelsConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChannelConfig {
     /// The latest element in the channel. If this is foo, users can download it as channel/foo.tar.gz.
-    pub latest: String,
+    pub latest: Option<String>,
 
     /// The file extension of the files being served. If this is set to ".iso",
     /// the files have to have the form "some-file-name.iso". Multiple periods
@@ -126,7 +126,7 @@ impl Client {
             {
                 info!(
                     "Channel {channel_name} points to: {}",
-                    channel_config.latest
+                    channel_config.latest.as_deref().unwrap_or("(nothing yet)")
                 );
                 channels_config
                     .channels
@@ -239,11 +239,14 @@ impl Client {
 
         println!(
             "Updating channel {channel_name} from {} to {}.",
-            channel.latest, object_key
+            channel.latest.as_deref().unwrap_or("(nothing)"),
+            object_key
         );
 
-        channel.previous.push(channel.latest);
-        channel.latest = basename;
+        if let Some(previous) = channel.latest.take() {
+            channel.previous.push(previous);
+        }
+        channel.latest = Some(basename);
 
         self.write_data(
             &format!("{channel_name}.json"),

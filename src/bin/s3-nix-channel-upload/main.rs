@@ -68,8 +68,10 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
         "Latest: {}",
         config
             .channel(channel)
-            .map(|c| c.latest)
             .context("No such channel")?
+            .latest
+            .as_deref()
+            .unwrap_or("(nothing yet)")
     );
 
     Ok(())

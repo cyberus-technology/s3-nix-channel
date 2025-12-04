@@ -83,7 +83,14 @@ async fn handle_channel(
         channel_config.clone()
     };
 
-    let latest_object = &channel_config.latest;
+    let latest_object = &channel_config
+        .latest
+        // We could have a specific error here, but this only happens
+        // when a channel is initially set up. It becomes visible once
+        // it has content.
+        .ok_or_else(|| RequestError::NoSuchChannel {
+            file_name: path.clone(),
+        })?;
 
     let mut headers = HeaderMap::new();
 
