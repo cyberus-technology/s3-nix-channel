@@ -56,7 +56,7 @@ impl Args {
 async fn list_channels(s3_client: &Client) -> Result<()> {
     let config = s3_client.load_channels_config().await?;
 
-    config.channels().for_each(|c| println!("{c}"));
+    config.channels().for_each(|(name, _)| println!("{name}"));
 
     Ok(())
 }
@@ -68,8 +68,10 @@ async fn show_channel(s3_client: &Client, channel: &str) -> Result<()> {
         "Latest: {}",
         config
             .channel(channel)
-            .map(|c| c.latest)
             .context("No such channel")?
+            .latest
+            .as_deref()
+            .unwrap_or("(nothing yet)")
     );
 
     Ok(())

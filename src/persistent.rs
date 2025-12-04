@@ -28,11 +28,24 @@ struct PersistentChannelsConfig {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ChannelConfig {
     /// The latest element in the channel. If this is foo, users can download it as channel/foo.tar.gz.
-    pub latest: String,
+    pub latest: Option<String>,
+
+    /// The file extension of the files being served. If this is set to ".iso",
+    /// the files have to have the form "some-file-name.iso". Multiple periods
+    /// in the file_extension are allowed (e.g. ".tar.xz").
+    ///
+    /// Must include the starting period. Defaults to ".tar.xz" for backward
+    /// compatibility.
+    #[serde(default = "default_channel_file_extension")]
+    pub file_extension: String,
 
     /// Previous tarballs in this channel.
     #[serde(default)]
     pub previous: Vec<String>,
+}
+
+fn default_channel_file_extension() -> String {
+    ".tar.xz".to_owned()
 }
 
 /// The list of channels we know about and their latest object keys.
@@ -43,8 +56,8 @@ pub struct ChannelsConfig {
 }
 
 impl ChannelsConfig {
-    pub fn channels(&self) -> impl Iterator<Item = &str> {
-        self.channels.keys().map(|s| s.as_ref())
+    pub fn channels(&self) -> impl Iterator<Item = (&str, &ChannelConfig)> {
+        self.channels.iter().map(|(k, v)| (k.as_ref(), v))
     }
 
     pub fn channel(&self, channel_name: &str) -> Option<ChannelConfig> {
@@ -113,7 +126,7 @@ impl Client {
             {
                 info!(
                     "Channel {channel_name} points to: {}",
-                    channel_config.latest
+                    channel_config.latest.as_deref().unwrap_or("(nothing yet)")
                 );
                 channels_config
                     .channels
@@ -189,24 +202,25 @@ impl Client {
     /// **Note:** This operation is not concurrency-safe! Clients must
     /// serialize update operations.
     pub async fn update_channel(&self, channel_name: &str, file: &Path) -> Result<()> {
+        let channels_config = self.load_channels_config().await?;
+        let mut channel = channels_config
+            .channel(channel_name)
+            .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
+
         // Path::ends_with and Path::extension unfortunately don't do
         // what we need.
         if !file
             .as_os_str()
             .to_str()
             .ok_or_else(|| anyhow!("File name is not valid UTF-8"))?
-            .ends_with(".tar.xz")
+            .ends_with(&channel.file_extension)
         {
             return Err(anyhow!(
-                "Invalid file ending. Only .tar.xz is supported: {}",
+                "Invalid file ending. Only {} is supported: {}",
+                channel.file_extension,
                 file.display()
             ));
         }
-
-        let channels_config = self.load_channels_config().await?;
-        let mut channel = channels_config
-            .channel(channel_name)
-            .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
 
         let object_key = file
             .file_name()
@@ -216,7 +230,7 @@ impl Client {
             .to_owned();
 
         let basename = object_key
-            .strip_suffix(".tar.xz")
+            .strip_suffix(&channel.file_extension)
             // This unwrap is safe, because we checked the suffix earlier.
             .unwrap()
             .to_owned();
@@ -225,11 +239,14 @@ impl Client {
 
         println!(
             "Updating channel {channel_name} from {} to {}.",
-            channel.latest, object_key
+            channel.latest.as_deref().unwrap_or("(nothing)"),
+            object_key
         );
 
-        channel.previous.push(channel.latest);
-        channel.latest = basename;
+        if let Some(previous) = channel.latest.take() {
+            channel.previous.push(previous);
+        }
+        channel.latest = Some(basename);
 
         self.write_data(
             &format!("{channel_name}.json"),

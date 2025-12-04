@@ -148,6 +148,22 @@ This means requests to `/channel/nixos-25.05.tar.xz` will redirect to
 the tarball at `/permanent/nixos-25.05-2025-05-15.tar.xz`, with
 appropriate immutable link headers.
 
+#### Different File Extensions
+
+File extensions default to ".tar.xz", but other extensions can be configured as
+well. For example, a "nixos-minimal-install-25.05" channel with this configuration
+would serve ISO images:
+
+```json
+{
+  "latest": "nixos-minimal-install-25.05-2025-05-15",
+  "file_extension": ".iso"
+}
+```
+
+This would mean that `/channel/nixos-minimal-install-25.05.tar.xz` will redirect to
+the tarball at `/permanent/nixos-minimal-install-25.05-2025-05-15.iso`.
+
 ### Updating Channels
 
 New tarballs can be uploaded with `s3-nix-channel-upload`. You'll need

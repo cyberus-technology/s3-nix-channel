@@ -60,37 +60,37 @@ struct Config {
     channels: ArcSwap<ChannelsConfig>,
 }
 
-impl Config {
-    /// Return the latest object key for a given channel, if there is one.
-    fn latest_object_key(&self, channel_name: &str) -> Option<String> {
-        let channels = self.channels.load();
-
-        // The config may be updated concurrently. We can't hand out a
-        // reference.
-        channels
-            .channel(channel_name)
-            .map(|c| c.latest)
-            .map(|x| x.to_owned())
-    }
-}
-
 /// Redirect to the latest tarball of the requested channel.
 async fn handle_channel(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
-    let channel_name = path
-        .strip_suffix(".tar.xz")
-        .ok_or_else(|| RequestError::InvalidFile {
+    let channel_config = {
+        let channels_config = config.channels.load();
+
+        // TODO Needlessly inefficient. But we cannot use split_filename here,
+        // because channel names often include periods, such as foobar-24.05.
+        // :-(
+        let (_, channel_config) = channels_config
+            .channels()
+            .find(|(k, v)| {
+                info!("{path} vs {k}{}", v.file_extension);
+                path == format!("{k}{}", v.file_extension)
+            })
+            .ok_or_else(|| RequestError::NoSuchChannel {
+                file_name: path.clone(),
+            })?;
+        channel_config.clone()
+    };
+
+    let latest_object = &channel_config
+        .latest
+        // We could have a specific error here, but this only happens
+        // when a channel is initially set up. It becomes visible once
+        // it has content.
+        .ok_or_else(|| RequestError::NoSuchChannel {
             file_name: path.clone(),
         })?;
-
-    let latest_object =
-        config
-            .latest_object_key(channel_name)
-            .ok_or_else(|| RequestError::NoSuchChannel {
-                channel_name: channel_name.to_owned(),
-            })?;
 
     let mut headers = HeaderMap::new();
 
@@ -99,8 +99,8 @@ async fn handle_channel(
     headers.insert(
         LINK,
         HeaderValue::from_str(&format!(
-            "<{}/permanent/{latest_object}.tar.xz>; rel=\"immutable\"",
-            config.base_url
+            "<{}/permanent/{latest_object}{}>; rel=\"immutable\"",
+            config.base_url, channel_config.file_extension
         ))
         .map_err(|_e| RequestError::Unknown)?,
     );
@@ -110,7 +110,7 @@ async fn handle_channel(
         Redirect::temporary(
             &config
                 .s3_client
-                .sign_request(&format!("{latest_object}.tar.xz"))
+                .sign_request(&format!("{latest_object}{}", channel_config.file_extension))
                 .await?,
         ),
     ))
@@ -202,10 +202,12 @@ async fn handle_persistent(
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
-    if !path.ends_with(".tar.xz") {
-        return Err(RequestError::InvalidFile {
-            file_name: path.clone(),
-        });
+    // TODO This is very unfortunate. We basically allow the client to grab
+    // everything from the bucket here. This would include our config files as
+    // well. There are no secrets in them, but it's still not great. We make a
+    // half-hearted attempt at preventing it here...
+    if path.ends_with(".json") {
+        return Err(RequestError::NoSuchChannel { file_name: path });
     }
 
     Ok(Redirect::temporary(
