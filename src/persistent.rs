@@ -8,7 +8,10 @@ use std::{
 
 use anyhow::{anyhow, Context, Result};
 use aws_sdk_s3::primitives::ByteStream;
-use axum::body::Bytes;
+use axum::{
+    body::Bytes,
+    http::{self, Method},
+};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info};
 
@@ -141,25 +144,44 @@ impl Client {
     }
 
     /// Return a signed request for a specific object key in the bucket.
-    pub async fn sign_request(&self, object_key: &str) -> Result<String, RequestError> {
+    pub async fn sign_request(
+        &self,
+        method: http::Method,
+        object_key: &str,
+    ) -> Result<String, RequestError> {
         use aws_sdk_s3::presigning::PresigningConfig;
 
-        Ok(self
-            .client
-            .get_object()
-            .bucket(&self.bucket)
-            .key(object_key)
-            // TODO Should expiration be configurable?
-            .presigned(
-                PresigningConfig::expires_in(Duration::from_secs(600))
-                    .map_err(|_e| RequestError::PresignConfigFailure)?,
-            )
-            .await
-            .map_err(|_e| RequestError::PresignFailure {
-                object_key: object_key.to_owned(),
-            })?
-            .uri()
-            .to_string())
+        // TODO Should expiration be configurable?
+        let presigning_config = PresigningConfig::expires_in(Duration::from_secs(600))
+            .map_err(|_e| RequestError::PresignConfigFailure)?;
+
+        let req = match method {
+            Method::GET => self
+                .client
+                .get_object()
+                .bucket(&self.bucket)
+                .key(object_key)
+                .presigned(presigning_config)
+                .await
+                .map_err(|_e| RequestError::PresignFailure {
+                    object_key: object_key.to_owned(),
+                }),
+            Method::HEAD => self
+                .client
+                .head_object()
+                .bucket(&self.bucket)
+                .key(object_key)
+                .presigned(presigning_config)
+                .await
+                .map_err(|_e| RequestError::PresignFailure {
+                    object_key: object_key.to_owned(),
+                }),
+            unsupported => Err(RequestError::UnsupportedMethod {
+                method: unsupported,
+            }),
+        }?;
+
+        Ok(req.uri().to_owned())
     }
 
     /// Upload a file to the persistent store. Doesn't update any channel.

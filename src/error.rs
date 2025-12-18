@@ -1,4 +1,7 @@
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{
+    http::{self, StatusCode},
+    response::IntoResponse,
+};
 
 #[derive(thiserror::Error, Debug)]
 pub enum RequestError {
@@ -11,6 +14,8 @@ pub enum RequestError {
 
     #[error("Invalid token: {reason}")]
     InvalidToken { reason: String },
+    #[error("Unsupported HTTP method: {method}")]
+    UnsupportedMethod { method: http::Method },
     #[error("Unknown error")]
     Unknown,
 }
@@ -21,6 +26,7 @@ impl IntoResponse for RequestError {
             match self {
                 RequestError::NoSuchChannel { file_name: _ } => StatusCode::NOT_FOUND,
                 RequestError::InvalidToken { reason: _ } => StatusCode::FORBIDDEN,
+                RequestError::UnsupportedMethod { method: _ } => StatusCode::METHOD_NOT_ALLOWED,
                 RequestError::PresignConfigFailure
                 | RequestError::PresignFailure { object_key: _ }
                 | RequestError::Unknown => StatusCode::INTERNAL_SERVER_ERROR,

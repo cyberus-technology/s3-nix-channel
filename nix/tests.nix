@@ -117,44 +117,38 @@ in
     name = "s3-nix-channel";
 
     nodes = {
-      s3 =
-        { config, ... }:
-        {
-          services.minio = {
-            inherit accessKey secretKey region;
+      s3 = {
+        services.minio = {
+          inherit accessKey secretKey region;
 
-            enable = true;
-            # minio listens by default on port 9000.
-          };
-
-          environment.systemPackages = with pkgs; [
-            minio-client
-          ];
-
-          networking.firewall.enable = false;
+          enable = true;
+          # minio listens by default on port 9000.
         };
 
-      servePublic =
-        { config, pkgs, ... }:
-        {
-          imports = [
-            self.nixosModules.default
-            tarballServeCommon
-          ];
-        };
+        environment.systemPackages = with pkgs; [
+          minio-client
+        ];
 
-      servePrivate =
-        { config, pkgs, ... }:
-        {
-          imports = [
-            self.nixosModules.default
-            tarballServeCommon
-          ];
+        networking.firewall.enable = false;
+      };
 
-          services.s3-nix-channel = {
-            jwtPublicKey = "${rsaKeypair}/public.pem";
-          };
+      servePublic = {
+        imports = [
+          self.nixosModules.default
+          tarballServeCommon
+        ];
+      };
+
+      servePrivate = {
+        imports = [
+          self.nixosModules.default
+          tarballServeCommon
+        ];
+
+        services.s3-nix-channel = {
+          jwtPublicKey = "${rsaKeypair}/public.pem";
         };
+      };
 
     };
 
@@ -190,6 +184,10 @@ in
       servePublic.succeed("cmp reference.tar.xz latest.tar.xz")
       servePublic.succeed("cmp reference.tar.xz permanent.tar.xz")
 
+      # Now with HEAD requests
+      assert "200" == servePublic.succeed("curl -s -o /dev/null -w '%{http_code}' --head -vL http://localhost/channel/thechannel-24.05.tar.xz")
+      assert "200" == servePublic.succeed("curl -s -o /dev/null -w '%{http_code}' --head -vL http://localhost/permanent/tarball-1234.tar.xz")
+
       # Now the same with custom file endings
       servePublic.succeed("curl -vL http://localhost/channel/install-24.05.iso > latest.iso")
       servePublic.succeed("curl -vL http://localhost/permanent/media-1234.iso > permanent.iso")
@@ -215,6 +213,10 @@ in
       servePrivate.copy_from_host("${rsaKeypair}/jwt", "jwt")
       assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/channel/thechannel-24.05.tar.xz")
       assert "200" == servePrivate.succeed("curl -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/permanent/tarball-1234.tar.xz")
+
+      # Also HEAD requests
+      assert "200" == servePrivate.succeed("curl --head -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/channel/thechannel-24.05.tar.xz")
+      assert "200" == servePrivate.succeed("curl --head -Ls -u :$(cat jwt) --basic -o /dev/null -w \'%{http_code}\' http://localhost/permanent/tarball-1234.tar.xz")
 
       ## Check whether the channel works as flake input.
       servePrivate.succeed("mkdir -p flake ~/.config/nix")
