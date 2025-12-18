@@ -4,7 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use arc_swap::ArcSwap;
 use axum::{
     extract::{Path, Request, State},
-    http::{header::LINK, HeaderMap, HeaderValue, StatusCode},
+    http::{header::LINK, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{self, IntoResponse, Redirect},
     routing::get,
@@ -62,6 +62,7 @@ struct Config {
 
 /// Redirect to the latest tarball of the requested channel.
 async fn handle_channel(
+    method: Method,
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
@@ -110,7 +111,10 @@ async fn handle_channel(
         Redirect::temporary(
             &config
                 .s3_client
-                .sign_request(&format!("{latest_object}{}", channel_config.file_extension))
+                .sign_request(
+                    method,
+                    &format!("{latest_object}{}", channel_config.file_extension),
+                )
                 .await?,
         ),
     ))
@@ -199,6 +203,7 @@ async fn log_request_middleware(req: Request, next: Next) -> response::Response 
 
 /// Forward a request to the backing store.
 async fn handle_persistent(
+    method: Method,
     Path(path): Path<String>,
     State(config): State<Arc<Config>>,
 ) -> Result<impl IntoResponse, RequestError> {
@@ -211,7 +216,7 @@ async fn handle_persistent(
     }
 
     Ok(Redirect::temporary(
-        &config.s3_client.sign_request(&path).await?,
+        &config.s3_client.sign_request(method, &path).await?,
     ))
 }
 
