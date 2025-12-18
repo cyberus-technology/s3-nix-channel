@@ -117,44 +117,38 @@ in
     name = "s3-nix-channel";
 
     nodes = {
-      s3 =
-        { config, ... }:
-        {
-          services.minio = {
-            inherit accessKey secretKey region;
+      s3 = {
+        services.minio = {
+          inherit accessKey secretKey region;
 
-            enable = true;
-            # minio listens by default on port 9000.
-          };
-
-          environment.systemPackages = with pkgs; [
-            minio-client
-          ];
-
-          networking.firewall.enable = false;
+          enable = true;
+          # minio listens by default on port 9000.
         };
 
-      servePublic =
-        { config, pkgs, ... }:
-        {
-          imports = [
-            self.nixosModules.default
-            tarballServeCommon
-          ];
-        };
+        environment.systemPackages = with pkgs; [
+          minio-client
+        ];
 
-      servePrivate =
-        { config, pkgs, ... }:
-        {
-          imports = [
-            self.nixosModules.default
-            tarballServeCommon
-          ];
+        networking.firewall.enable = false;
+      };
 
-          services.s3-nix-channel = {
-            jwtPublicKey = "${rsaKeypair}/public.pem";
-          };
+      servePublic = {
+        imports = [
+          self.nixosModules.default
+          tarballServeCommon
+        ];
+      };
+
+      servePrivate = {
+        imports = [
+          self.nixosModules.default
+          tarballServeCommon
+        ];
+
+        services.s3-nix-channel = {
+          jwtPublicKey = "${rsaKeypair}/public.pem";
         };
+      };
 
     };
 
