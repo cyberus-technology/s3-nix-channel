@@ -91,6 +91,11 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let s3_client = Client::new_from_env(args.bucket()).await?;
 
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
+
     match args.commands {
         Commands::ListChannels { bucket: _ } => list_channels(&s3_client).await?,
         Commands::ShowChannel { bucket: _, channel } => show_channel(&s3_client, &channel).await?,
