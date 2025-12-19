@@ -11,6 +11,17 @@ enum Commands {
         /// The S3 bucket to upload the content to.
         bucket: String,
     },
+    /// Add a channel.
+    AddChannel {
+        /// The S3 bucket to upload the content to.
+        bucket: String,
+
+        /// The channel to publish for.
+        channel: String,
+
+        /// The file extension for the channel.
+        extension: String,
+    },
     /// Show the channel details.
     ShowChannel {
         /// The S3 bucket to upload the content to.
@@ -43,6 +54,11 @@ impl Args {
     fn bucket(&self) -> &str {
         match &self.commands {
             Commands::ListChannels { bucket }
+            | Commands::AddChannel {
+                bucket,
+                channel: _,
+                extension: _,
+            }
             | Commands::ShowChannel { bucket, channel: _ }
             | Commands::Publish {
                 bucket,
@@ -57,6 +73,15 @@ async fn list_channels(s3_client: &Client) -> Result<()> {
     let config = s3_client.load_channels_config().await?;
 
     config.channels().for_each(|(name, _)| println!("{name}"));
+
+    Ok(())
+}
+
+async fn add_channel(s3_client: &Client, channel: &str, extension: &str) -> Result<()> {
+    s3_client
+        .add_channel(channel, extension)
+        .await
+        .context("Failed create channel")?;
 
     Ok(())
 }
@@ -94,6 +119,11 @@ async fn main() -> Result<()> {
     match args.commands {
         Commands::ListChannels { bucket: _ } => list_channels(&s3_client).await?,
         Commands::ShowChannel { bucket: _, channel } => show_channel(&s3_client, &channel).await?,
+        Commands::AddChannel {
+            bucket: _,
+            channel,
+            extension,
+        } => add_channel(&s3_client, &channel, &extension).await?,
         Commands::Publish {
             bucket: _,
             channel,
