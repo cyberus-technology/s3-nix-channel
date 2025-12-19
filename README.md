@@ -161,7 +161,7 @@ would serve ISO images:
 }
 ```
 
-This would mean that `/channel/nixos-minimal-install-25.05.tar.xz` will redirect to
+This would mean that `/channel/nixos-minimal-install-25.05.iso` will redirect to
 the tarball at `/permanent/nixos-minimal-install-25.05-2025-05-15.iso`.
 
 ### Updating Channels
