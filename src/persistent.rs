@@ -19,7 +19,7 @@ use crate::error::RequestError;
 
 /// The persistent configuration that lives in the S3 bucket as
 /// /channels.json.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct PersistentChannelsConfig {
     /// The list of all channels we serve. Each channel needs a
     /// corresponding <channel>.json file for configuration in the
