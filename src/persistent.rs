@@ -219,6 +219,26 @@ impl Client {
         Ok(())
     }
 
+    async fn file_exists(&self, object_key: &str) -> Result<bool> {
+        match self
+            .client
+            .head_object()
+            .bucket(&self.bucket)
+            .key(object_key)
+            .send()
+            .await
+        {
+            Ok(_) => Ok(true),
+            Err(err) => {
+                if err.as_service_error().map(|e| e.is_not_found()) == Some(true) {
+                    Ok(false)
+                } else {
+                    Err(anyhow!("Failed to check if object exists: {err}"))
+                }
+            }
+        }
+    }
+
     /// Update the channel to point to the given file.
     ///
     /// **Note:** This operation is not concurrency-safe! Clients must
@@ -250,6 +270,10 @@ impl Client {
             .to_str()
             .ok_or_else(|| anyhow!("File name needs to be valid UTF-8: {}", file.display()))?
             .to_owned();
+
+        if self.file_exists(&object_key).await? {
+            return Err(anyhow!("Refusing to overwrite key: {object_key}"));
+        }
 
         let basename = object_key
             .strip_suffix(&channel.file_extension)
