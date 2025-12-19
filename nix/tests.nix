@@ -236,6 +236,9 @@ in
       servePrivate.copy_from_host("${isoImage}/media-1235.iso", "media-1235.iso")
       print(servePrivate.succeed("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} install-24.05 media-1235.iso"))
 
+      # Fail to upload duplicate files
+      servePrivate.fail("env $(cat ${secretsFile}) s3-nix-channel-upload publish ${bucket} install-24.05 media-1235.iso")
+
       # Force a reload to pick up the new version.
       servePrivate.succeed("systemctl restart s3-nix-channel.service")
 
