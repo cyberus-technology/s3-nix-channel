@@ -118,25 +118,30 @@ impl Client {
 
         for channel_name in persistent_config.channels {
             let config_file = format!("{channel_name}.json");
-            if let Ok(channel_config) = self
+            let channel_config = self
                 .read_file(&config_file)
                 .await
                 .context("Failed to read channel config")
                 .and_then(|bytes| {
                     serde_json::from_slice::<ChannelConfig>(&bytes)
                         .context("Failed to deserialize channel configuration")
-                })
-            {
-                info!(
-                    "Channel {channel_name} points to: {}",
-                    channel_config.latest.as_deref().unwrap_or("(nothing yet)")
-                );
-                channels_config
-                    .channels
-                    .insert(channel_name, channel_config);
-            } else {
-                error!("Configured channel {channel_name:?} has no corresponding {config_file} in the bucket. Ignoring!");
-                continue;
+                });
+            match channel_config {
+                Ok(channel_config) => {
+                    info!(
+                        "Channel {channel_name} points to: {}",
+                        channel_config.latest.as_deref().unwrap_or("(nothing yet)")
+                    );
+                    channels_config
+                        .channels
+                        .insert(channel_name, channel_config);
+                }
+                Err(err) => {
+                    error!("Failed reading configuration for {channel_name:?}, with path {config_file:?} in the bucket. Ignoring.");
+                    info!("Context: {}", err);
+                    info!("Cause: {}", err.root_cause());
+                    continue;
+                }
             }
         }
 

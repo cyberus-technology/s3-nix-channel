@@ -56,7 +56,9 @@ impl Args {
 async fn list_channels(s3_client: &Client) -> Result<()> {
     let config = s3_client.load_channels_config().await?;
 
-    config.channels().for_each(|(name, _)| println!("{name}"));
+    config
+        .channels()
+        .for_each(|(name, cfg)| println!("{name} ({})", cfg.file_extension));
 
     Ok(())
 }
@@ -90,6 +92,11 @@ async fn publish(s3_client: &Client, channel: &str, file: &Path) -> Result<()> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let s3_client = Client::new_from_env(args.bucket()).await?;
+
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_writer(std::io::stderr)
+        .init();
 
     match args.commands {
         Commands::ListChannels { bucket: _ } => list_channels(&s3_client).await?,

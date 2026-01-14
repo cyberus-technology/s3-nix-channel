@@ -75,7 +75,7 @@ async fn handle_channel(
         let (_, channel_config) = channels_config
             .channels()
             .find(|(k, v)| {
-                info!("{path} vs {k}{}", v.file_extension);
+                debug!("{path} vs {k}{}", v.file_extension);
                 path == format!("{k}{}", v.file_extension)
             })
             .ok_or_else(|| RequestError::NoSuchChannel {
