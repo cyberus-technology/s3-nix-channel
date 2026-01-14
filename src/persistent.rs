@@ -19,7 +19,7 @@ use crate::error::RequestError;
 
 /// The persistent configuration that lives in the S3 bucket as
 /// /channels.json.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 struct PersistentChannelsConfig {
     /// The list of all channels we serve. Each channel needs a
     /// corresponding <channel>.json file for configuration in the
@@ -28,7 +28,7 @@ struct PersistentChannelsConfig {
 }
 
 /// The persistent configuration of a single channel.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct ChannelConfig {
     /// The latest element in the channel. If this is foo, users can download it as channel/foo.tar.gz.
     pub latest: Option<String>,
@@ -63,6 +63,13 @@ where
 }
 
 impl ChannelConfig {
+    pub fn init(file_extension: &str) -> ChannelConfig {
+        ChannelConfig {
+            file_extension: file_extension.to_owned(),
+            ..Default::default()
+        }
+    }
+
     /// Remove duplicates in `previous`. This happened for old releases, because
     /// we didn't prevent re-uploading the same file.
     ///
@@ -271,12 +278,6 @@ impl Client {
 
     /// Add a channel to the configuration, and seed with stub json config.
     pub async fn add_channel(&self, channel_name: &str, file_extension: &str) -> Result<()> {
-        let channel = ChannelConfig {
-            file_extension: file_extension.into(),
-            latest: None,
-            previous: vec![],
-        };
-
         if channel_name == "channels" {
             return Err(anyhow!("Invalid channel name: {channel_name}"));
         }
@@ -287,19 +288,19 @@ impl Client {
 
         self.write_data(
             &format!("{channel_name}.json"),
-            serde_json::to_vec_pretty(&channel).context("Failed to serialize channel")?,
+            serde_json::to_vec_pretty(&ChannelConfig::init(file_extension))
+                .context("Failed to serialize channel")?,
         )
         .await
         .context("Failed to create channel.")?;
 
         // Add channel to channels config.
-        let mut persistent_config: PersistentChannelsConfig =
-            if self.file_exists("channels.json").await? {
-                serde_json::from_slice(&self.read_file("channels.json").await?)
-                    .context("Failed to deserialize channels.json")?
-            } else {
-                PersistentChannelsConfig { channels: vec![] }
-            };
+        let mut persistent_config = if self.file_exists("channels.json").await? {
+            serde_json::from_slice(&self.read_file("channels.json").await?)
+                .context("Failed to deserialize channels.json")?
+        } else {
+            PersistentChannelsConfig::default()
+        };
 
         persistent_config.channels.push(channel_name.into());
 
