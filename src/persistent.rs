@@ -2,7 +2,7 @@
 //! abstraction is not perfect as S3 leaks through pretty heavily. :)
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     {path::Path, time::Duration},
 };
 
@@ -45,6 +45,31 @@ pub struct ChannelConfig {
     /// Previous tarballs in this channel.
     #[serde(default)]
     pub previous: Vec<String>,
+}
+
+/// Removes duplicate entries from a vector.
+///
+/// We keep the first unique entry. All duplicate ones are removed. This
+/// function retains the order of the remaining elements.
+fn remove_duplicates<T>(vec: &mut Vec<T>) -> bool
+where
+    T: Eq + Ord + Clone,
+{
+    let original_size = vec.len();
+    let mut seen = BTreeSet::new();
+    vec.retain(|item| seen.insert(item.clone()));
+
+    original_size != vec.len()
+}
+
+impl ChannelConfig {
+    /// Remove duplicates in `previous`. This happened for old releases, because
+    /// we didn't prevent re-uploading the same file.
+    ///
+    /// Returns true, if we removed entries.
+    pub fn remove_previous_duplicates(&mut self) -> bool {
+        remove_duplicates(&mut self.previous)
+    }
 }
 
 fn default_channel_file_extension() -> String {
@@ -297,6 +322,12 @@ impl Client {
             .channel(channel_name)
             .ok_or_else(|| anyhow!("Channel {channel_name} does not exit!"))?;
 
+        // We're changing the channel config anyhow, so let's clean it up at the
+        // same time.
+        if channel.remove_previous_duplicates() {
+            info!("Cleaned up duplicate entries in the channel history.")
+        }
+
         // Path::ends_with and Path::extension unfortunately don't do
         // what we need.
         if !file
@@ -349,5 +380,53 @@ impl Client {
         .await.context("Failed to update channel. This leaked the tarball! Remove it manually, if this is an issue.")?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remove_duplicates_works() {
+        // Test with empty vec
+        let mut vec: Vec<i32> = vec![];
+        assert!(!remove_duplicates(&mut vec));
+        assert_eq!(vec, Vec::<i32>::new());
+
+        // Test with duplicates
+        let mut vec = vec![1, 2, 3, 2, 4, 3, 5];
+        assert!(remove_duplicates(&mut vec));
+        assert_eq!(vec, vec![1, 2, 3, 4, 5]);
+
+        // Test with no duplicates
+        let mut vec = vec![1, 2, 3, 4, 5];
+        assert!(!remove_duplicates(&mut vec));
+        assert_eq!(vec, vec![1, 2, 3, 4, 5]);
+
+        // Test with single element
+        let mut vec = vec![1];
+        assert!(!remove_duplicates(&mut vec));
+        assert_eq!(vec, vec![1]);
+
+        // Test with all duplicates
+        let mut vec = vec![1, 1, 1, 1];
+        assert!(remove_duplicates(&mut vec));
+        assert_eq!(vec, vec![1]);
+
+        // Test with strings
+        let mut vec = vec![
+            "a".to_string(),
+            "b".to_string(),
+            "a".to_string(),
+            "c".to_string(),
+        ];
+        assert!(remove_duplicates(&mut vec));
+        assert_eq!(vec, vec!["a".to_string(), "b".to_string(), "c".to_string()]);
+
+        // Test that order is preserved
+        let mut vec = vec![3, 1, 2, 1, 3, 2];
+        assert!(remove_duplicates(&mut vec));
+        assert_eq!(vec, vec![3, 1, 2]);
     }
 }
