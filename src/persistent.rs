@@ -19,7 +19,7 @@ use crate::error::RequestError;
 
 /// The persistent configuration that lives in the S3 bucket as
 /// /channels.json.
-#[derive(Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct PersistentChannelsConfig {
     /// The list of all channels we serve. Each channel needs a
     /// corresponding <channel>.json file for configuration in the
@@ -242,6 +242,49 @@ impl Client {
                 }
             }
         }
+    }
+
+    /// Add a channel to the configuration, and seed with stub json config.
+    pub async fn add_channel(&self, channel_name: &str, file_extension: &str) -> Result<()> {
+        let channel = ChannelConfig {
+            file_extension: file_extension.into(),
+            latest: None,
+            previous: vec![],
+        };
+
+        if channel_name == "channels" {
+            return Err(anyhow!("Invalid channel name: {channel_name}"));
+        }
+
+        if self.file_exists(&format!("{channel_name}.json")).await? {
+            return Err(anyhow!("Refusing to overwrite channel: {channel_name}"));
+        }
+
+        self.write_data(
+            &format!("{channel_name}.json"),
+            serde_json::to_vec_pretty(&channel).context("Failed to serialize channel")?,
+        )
+        .await
+        .context("Failed to create channel.")?;
+
+        // Add channel to channels config.
+        let mut persistent_config: PersistentChannelsConfig =
+            if self.file_exists("channels.json").await? {
+                serde_json::from_slice(&self.read_file("channels.json").await?)
+                    .context("Failed to deserialize channels.json")?
+            } else {
+                PersistentChannelsConfig { channels: vec![] }
+            };
+
+        persistent_config.channels.push(channel_name.into());
+
+        self.write_data(
+            "channels.json",
+            serde_json::to_vec_pretty(&persistent_config).context("Failed to serialize channel")?,
+        )
+        .await.context(format!("Failed to write channels information. {channel_name}.json file was leaked to the bucket."))?;
+
+        Ok(())
     }
 
     /// Update the channel to point to the given file.
