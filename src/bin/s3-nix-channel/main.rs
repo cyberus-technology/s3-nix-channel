@@ -328,7 +328,7 @@ async fn main() -> Result<()> {
 
     tokio::task::spawn_blocking(|| {
         use sd_notify::{notify, NotifyState};
-        if let Err(e) = notify(true, &[NotifyState::Ready]) {
+        if let Err(e) = notify(&[NotifyState::Ready]) {
             warn!("Failed to notify systemd: {e}");
         } else {
             debug!("Notified systemd that we are ready to serve!");
